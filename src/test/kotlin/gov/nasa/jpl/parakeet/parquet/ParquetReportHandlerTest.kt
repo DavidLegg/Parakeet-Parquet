@@ -22,6 +22,7 @@ import kotlin.io.path.createTempDirectory
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
+import kotlin.reflect.full.isSubtypeOf
 import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -186,6 +187,33 @@ object ParquetReportHandlerTest {
             assertEquals(typeOf<Boolean>(), b.type)
             assertEquals("s", s.name)
             assertEquals(typeOf<String>(), s.type)
+        }
+
+        @Test
+        fun `a parquet report handler shall choose appropriate list types for list channels`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                parquetReportHandler.initChannel<List<Int>>("list_channel")
+            }
+
+            val df = DataFrame.readParquet(path)
+            assertEquals(0 to 2, df.shape())
+            val (timestampCol, listCol) = df.columns()
+            assertEquals("timestamp", timestampCol.name)
+            assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
+            assertEquals("list_channel", listCol.name)
+            // Kotlin's DataFrame library currently can't read the parquet schema completely.
+            // List element types are lost for an empty parquet file.
+            // At the time of writing, the schema was manually verified to be correct:
+            // optional group list_channel (LIST) {
+            //   repeated group list {
+            //     required int32 element;
+            //   }
+            // }
+            assertEquals(List::class, listCol.typeClass)
         }
 
         private inline fun <reified T> ChannelizedReportHandler.initChannel(

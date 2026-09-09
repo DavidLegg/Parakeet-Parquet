@@ -115,7 +115,8 @@ class ParquetReportHandler(
             PrimitiveKind.SHORT -> primitive(PrimitiveTypeName.INT32).`as`(LogicalTypeAnnotation.intType(16))
 
             StructureKind.LIST -> Types.list(repetition)
-                .element(getElementDescriptor(0).toParquetMessageType(getElementName(0)))
+                // Parquet schema requires that the element name be "element"
+                .element(getElementDescriptor(0).toParquetMessageType("element"))
 
             StructureKind.MAP -> Types.map(repetition)
                 .key(getElementDescriptor(0).toParquetMessageType(getElementName(0)))
