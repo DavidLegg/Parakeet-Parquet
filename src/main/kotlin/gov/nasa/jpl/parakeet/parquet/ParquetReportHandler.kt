@@ -271,6 +271,7 @@ class ParquetReportHandler(
             // Special rules apply for each kind of structure. Define them here.
             val structureKind = descriptor.kind as StructureKind
             var structIsEmpty = true
+            var startedMapEntry = false
 
             fun startField(descriptor: SerialDescriptor, index: Int) = when (structureKind) {
                 StructureKind.CLASS -> recordConsumer.startField(descriptor.getElementName(index), index)
@@ -280,10 +281,23 @@ class ParquetReportHandler(
                     recordConsumer.startGroup()
                     recordConsumer.startField("element", 0)
                 }
-                StructureKind.MAP -> when (index) {
-                    0 -> recordConsumer.startField("key", 0)
-                    1 -> recordConsumer.startField("value", 1)
-                    else -> throw AssertionError("Impossible code path")
+                StructureKind.MAP -> {
+                    if (structIsEmpty) recordConsumer.startField("key_value", 0)
+                    structIsEmpty = false
+                    if (index % 2 == 0) {
+                        check (!startedMapEntry) {
+                            "Map serializers must alternate key, then value"
+                        }
+                        // Start the group for this map entry
+                        recordConsumer.startGroup()
+                        recordConsumer.startField("key", 0)
+                        startedMapEntry = true
+                    } else {
+                        check (startedMapEntry) {
+                            "Map serializers must alternate key, then value"
+                        }
+                        recordConsumer.startField("value", 1)
+                    }
                 }
 
                 StructureKind.OBJECT -> throw AssertionError("Impossible code path")
@@ -294,10 +308,15 @@ class ParquetReportHandler(
                     recordConsumer.endField("element", 0)
                     recordConsumer.endGroup()
                 }
-                StructureKind.MAP -> when (index) {
-                    0 -> recordConsumer.endField("key", 0)
-                    1 -> recordConsumer.endField("value", 1)
-                    else -> throw AssertionError("Impossible code path")
+                StructureKind.MAP -> {
+                    if (index % 2 == 0) {
+                        recordConsumer.endField("key", 0)
+                    } else {
+                        recordConsumer.endField("value", 1)
+                        // End the group for this map entry
+                        recordConsumer.endGroup()
+                        startedMapEntry = false
+                    }
                 }
 
                 StructureKind.OBJECT -> throw AssertionError("Impossible code path")
@@ -311,7 +330,7 @@ class ParquetReportHandler(
                     when (structureKind) {
                         StructureKind.CLASS -> {/* nothing to do */}
                         StructureKind.LIST -> if (!structIsEmpty) recordConsumer.endField("list", 0)
-                        StructureKind.MAP -> TODO()
+                        StructureKind.MAP -> if (!structIsEmpty) recordConsumer.endField("key_value", 0)
                         StructureKind.OBJECT -> throw AssertionError("Impossible code path")
                     }
                     recordConsumer.endGroup()
@@ -393,8 +412,27 @@ class ParquetReportHandler(
                     serializer: SerializationStrategy<T>,
                     value: T?,
                 ) {
-                    // nulls are not encoded in parquet, you just leave the field out
-                    if (value != null) encodeSerializableElement(descriptor, index, serializer, value)
+                    if (value == null) {
+                        when (structureKind) {
+                            StructureKind.CLASS -> {/* nothing to do */}
+                            StructureKind.LIST -> {
+                                // Write a group without the "element" field to represent a null element
+                                recordConsumer.startGroup()
+                                recordConsumer.endGroup()
+                            }
+                            StructureKind.MAP -> {
+                                require(startedMapEntry && index % 2 == 1) {
+                                    "Only values of a map may be null in parquet"
+                                }
+                                // Record the null value by omitting the value field, ending the key_value group early
+                                recordConsumer.endGroup()
+                                startedMapEntry = false
+                            }
+                            StructureKind.OBJECT -> throw AssertionError("Impossible code path")
+                        }
+                    } else {
+                        encodeSerializableElement(descriptor, index, serializer, value)
+                    }
                 }
             }
         }

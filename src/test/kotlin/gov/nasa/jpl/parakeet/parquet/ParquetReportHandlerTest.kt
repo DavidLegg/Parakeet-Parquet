@@ -528,6 +528,71 @@ object ParquetReportHandlerTest {
             // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
         }
 
+        @Test
+        fun `parquet report handler supports map types`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val mapChannel = parquetReportHandler.initChannel<Map<String, Int>>("map_channel")
+                mapChannel.report(t1, mapOf("a" to 1))
+                mapChannel.report(t2, mapOf("a" to 2, "b" to 3))
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "map_channel") {
+                row {
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataFrame<*>>(it)
+                        checkDataFrame(it, "key", "value") {
+                            rowEquals("a", 1)
+                        }
+                    }
+                }
+                row {
+                    assertEquals(t2.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataFrame<*>>(it)
+                        checkDataFrame(it, "key", "value") {
+                            rowEquals("a", 2)
+                            rowEquals("b", 3)
+                        }
+                    }
+                }
+            }
+        }
+
+        @Test
+        fun `parquet report handler supports empty maps`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val mapChannel = parquetReportHandler.initChannel<Map<String, Int>>("map_channel")
+                mapChannel.report(t1, mapOf())
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "map_channel") {
+                row {
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataFrame<*>>(it)
+                        checkDataFrame(it, "key", "value") {
+                        }
+                    }
+                }
+            }
+        }
+
+        // TODO: Test null values in lists and maps
+
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,
             metadata: Map<String, Metadatum> = mapOf()
