@@ -5,6 +5,7 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelMetadata
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.Metadatum
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
+import gov.nasa.jpl.parakeet.parquet.TestUtils.assertEquals
 import gov.nasa.jpl.parakeet.parquet.TestUtils.checkDataFrame
 import gov.nasa.jpl.parakeet.parquet.TestUtils.component6
 import gov.nasa.jpl.parakeet.parquet.TestUtils.component7
@@ -15,6 +16,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import org.jetbrains.kotlinx.dataframe.DataFrame
+import org.jetbrains.kotlinx.dataframe.DataRow
 import org.jetbrains.kotlinx.dataframe.columns.ColumnGroup
 import org.jetbrains.kotlinx.dataframe.columns.FrameColumn
 import org.jetbrains.kotlinx.dataframe.io.readParquet
@@ -68,7 +70,7 @@ object ParquetReportHandlerTest {
             ParquetReportHandler(path).use { parquetReportHandler -> }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 1, df.shape())
+            assertEquals(0 to 1, df.shape)
             val column = df.columns().single()
             assertEquals("timestamp", column.name)
             assertEquals(typeOf<LocalDateTime>(), column.type)
@@ -85,7 +87,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 2, df.shape())
+            assertEquals(0 to 2, df.shape)
             val (timestampCol, intCol) = df.columns()
             assertEquals("timestamp", timestampCol.name)
             assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
@@ -106,7 +108,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 4, df.shape())
+            assertEquals(0 to 4, df.shape)
             val (timestampCol, intCol1, intCol2, intCol3) = df.columns()
             assertEquals("timestamp", timestampCol.name)
             assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
@@ -134,7 +136,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 7, df.shape())
+            assertEquals(0 to 7, df.shape)
             val (timestampCol, intCol, longCol, floatCol, doubleCol, booleanCol, stringCol) = df.columns()
             assertEquals("timestamp", timestampCol.name)
             assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
@@ -173,7 +175,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 2, df.shape())
+            assertEquals(0 to 2, df.shape)
             val (timestampColumn, recordColumn) = df.columns()
             assertEquals("timestamp", timestampColumn.name)
             assertEquals(typeOf<LocalDateTime>(), timestampColumn.type)
@@ -205,7 +207,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 2, df.shape())
+            assertEquals(0 to 2, df.shape)
             val (timestampCol, listCol) = df.columns()
             assertEquals("timestamp", timestampCol.name)
             assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
@@ -232,7 +234,7 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(0 to 2, df.shape())
+            assertEquals(0 to 2, df.shape)
             val (timestampCol, mapCol) = df.columns()
             assertEquals("timestamp", timestampCol.name)
             assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
@@ -390,6 +392,142 @@ object ParquetReportHandlerTest {
             }
         }
 
+        @Test
+        fun `parquet report handler supports all major primitive types`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            val t3 = t2 + 1.days
+            val t4 = t3 + 1.days
+            val t5 = t4 + 1.days
+            val t6 = t5 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val intChannel = parquetReportHandler.initChannel<Int>("int_channel")
+                val longChannel = parquetReportHandler.initChannel<Long>("long_channel")
+                val floatChannel = parquetReportHandler.initChannel<Float>("float_channel")
+                val doubleChannel = parquetReportHandler.initChannel<Double>("double_channel")
+                val booleanChannel = parquetReportHandler.initChannel<Boolean>("boolean_channel")
+                val stringChannel = parquetReportHandler.initChannel<String>("string_channel")
+                intChannel.report(t1, 1)
+                longChannel.report(t2, 2L)
+                floatChannel.report(t3, 3.0f)
+                doubleChannel.report(t4, 4.0)
+                booleanChannel.report(t5, true)
+                stringChannel.report(t6, "test")
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "int_channel", "long_channel", "float_channel", "double_channel", "boolean_channel", "string_channel") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null, null, null, null)
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 2L, null, null, null, null)
+                rowEquals(t3.toLocalDateTime(TimeZone.UTC), null, null, 3.0f, null, null, null)
+                rowEquals(t4.toLocalDateTime(TimeZone.UTC), null, null, null, 4.0, null, null)
+                rowEquals(t5.toLocalDateTime(TimeZone.UTC), null, null, null, null, true, null)
+                rowEquals(t6.toLocalDateTime(TimeZone.UTC), null, null, null, null, null, "test")
+            }
+        }
+
+        @Test
+        fun `parquet report handler supports record types`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val recordChannel = parquetReportHandler.initChannel<TestRecord>("record_channel")
+                recordChannel.report(t1, TestRecord(1, 2L, 3.0f, 4.0, true, "test"))
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "record_channel") {
+                row {
+                    // The row has only two columns, but the value in record_channel is itself another DataRow.
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertEquals(1, it["i"])
+                        assertEquals(2L, it["l"])
+                        assertEquals(3.0f, it["f"])
+                        assertEquals(4.0, it["d"])
+                        assertEquals(true, it["b"])
+                        assertEquals("test", it["s"])
+                    }
+                }
+            }
+        }
+
+        @Serializable
+        data class EmptyRecordType(val s: String? = null)
+
+        @Test
+        fun `parquet report handler supports empty records`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val recordChannel = parquetReportHandler.initChannel<EmptyRecordType>("record_channel")
+                recordChannel.report(t1, EmptyRecordType())
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "record_channel") {
+                row {
+                    // The row has only two columns, but the value in record_channel is itself another DataRow.
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertEquals(null, it["s"])
+                    }
+                }
+            }
+        }
+
+        @Test
+        fun `parquet report handler supports list types`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val listChannel = parquetReportHandler.initChannel<List<Int>>("list_channel")
+                listChannel.report(t1, listOf(1))
+                listChannel.report(t2, listOf(2, 3, 4))
+            }
+
+            assert(path.exists())
+            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
+            // does not support reading parquet files with lists containing more than one element.
+            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+        }
+
+        @Test
+        fun `parquet report handler supports empty list reports`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val listChannel = parquetReportHandler.initChannel<List<Int>>("list_channel")
+                listChannel.report(t1, listOf())
+                listChannel.report(t2, listOf())
+            }
+
+            assert(path.exists())
+            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
+            // does not support reading parquet files with lists containing more than one element.
+            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+        }
+
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,
             metadata: Map<String, Metadatum> = mapOf()
@@ -420,5 +558,5 @@ object ParquetReportHandlerTest {
         }
     }
 
-    private fun DataFrame<*>.shape(): Pair<Int, Int> = rowsCount() to columnsCount()
+    private val DataFrame<*>.shape: Pair<Int, Int> get() = rowsCount() to columnsCount()
 }

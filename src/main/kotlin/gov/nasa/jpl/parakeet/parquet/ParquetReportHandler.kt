@@ -268,66 +268,107 @@ class ParquetReportHandler(
 
         override fun beginStructure(descriptor: SerialDescriptor): CompositeEncoder {
             recordConsumer.startGroup()
+            // Special rules apply for each kind of structure. Define them here.
+            val structureKind = descriptor.kind as StructureKind
+            var structIsEmpty = true
+
+            fun startField(descriptor: SerialDescriptor, index: Int) = when (structureKind) {
+                StructureKind.CLASS -> recordConsumer.startField(descriptor.getElementName(index), index)
+                StructureKind.LIST -> {
+                    if (structIsEmpty) recordConsumer.startField("list", 0)
+                    structIsEmpty = false
+                    recordConsumer.startGroup()
+                    recordConsumer.startField("element", 0)
+                }
+                StructureKind.MAP -> when (index) {
+                    0 -> recordConsumer.startField("key", 0)
+                    1 -> recordConsumer.startField("value", 1)
+                    else -> throw AssertionError("Impossible code path")
+                }
+
+                StructureKind.OBJECT -> throw AssertionError("Impossible code path")
+            }
+            fun endField(descriptor: SerialDescriptor, index: Int) = when (structureKind) {
+                StructureKind.CLASS -> recordConsumer.endField(descriptor.getElementName(index), index)
+                StructureKind.LIST -> {
+                    recordConsumer.endField("element", 0)
+                    recordConsumer.endGroup()
+                }
+                StructureKind.MAP -> when (index) {
+                    0 -> recordConsumer.endField("key", 0)
+                    1 -> recordConsumer.endField("value", 1)
+                    else -> throw AssertionError("Impossible code path")
+                }
+
+                StructureKind.OBJECT -> throw AssertionError("Impossible code path")
+            }
+
             return object : CompositeEncoder {
                 override val serializersModule: SerializersModule
                     get() = this@ParquetEncoder.serializersModule
 
                 override fun endStructure(descriptor: SerialDescriptor) {
+                    when (structureKind) {
+                        StructureKind.CLASS -> {/* nothing to do */}
+                        StructureKind.LIST -> if (!structIsEmpty) recordConsumer.endField("list", 0)
+                        StructureKind.MAP -> TODO()
+                        StructureKind.OBJECT -> throw AssertionError("Impossible code path")
+                    }
                     recordConsumer.endGroup()
                 }
 
                 override fun encodeBooleanElement(descriptor: SerialDescriptor, index: Int, value: Boolean) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeBoolean(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeByteElement(descriptor: SerialDescriptor, index: Int, value: Byte) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeByte(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeShortElement(descriptor: SerialDescriptor, index: Int, value: Short) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeShort(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeCharElement(descriptor: SerialDescriptor, index: Int, value: Char) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeChar(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeIntElement(descriptor: SerialDescriptor, index: Int, value: Int) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeInt(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeLongElement(descriptor: SerialDescriptor, index: Int, value: Long) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeLong(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeFloatElement(descriptor: SerialDescriptor, index: Int, value: Float) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeFloat(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeDoubleElement(descriptor: SerialDescriptor, index: Int, value: Double) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeDouble(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeStringElement(descriptor: SerialDescriptor, index: Int, value: String) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     encodeString(value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 override fun encodeInlineElement(descriptor: SerialDescriptor, index: Int): Encoder {
@@ -340,9 +381,9 @@ class ParquetReportHandler(
                     serializer: SerializationStrategy<T>,
                     value: T,
                 ) {
-                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    startField(descriptor, index)
                     serializer.serialize(this@ParquetEncoder, value)
-                    recordConsumer.endField(descriptor.getElementName(index), index)
+                    endField(descriptor, index)
                 }
 
                 @ExperimentalSerializationApi
