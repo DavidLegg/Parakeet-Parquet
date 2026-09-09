@@ -25,6 +25,10 @@ import org.apache.parquet.schema.Type
 import org.apache.parquet.schema.Types
 import java.nio.file.Path
 
+fun Path.usingParquetReportHandler(serializersModule: SerializersModule = Json.serializersModule, block: (ParquetReportHandler) -> Unit) {
+    ParquetReportHandler(this, serializersModule).use(block)
+}
+
 class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,
@@ -70,8 +74,7 @@ class ParquetReportHandler(
         channelInfo[name] = ChannelInfo(
             // Add 1 to account for the timestamp field at index 0
             channelInfo.size + 1,
-            // Regardless of whether the original channel is nullable, the parquet column must be nullable to account for missing data.
-            serializer.descriptor.nullable.toParquetMessageType(name.toString()),
+            serializer.descriptor.toParquetMessageType(name.toString(), topLevel = true),
             serializer,
         )
     }
@@ -97,8 +100,8 @@ class ParquetReportHandler(
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    private fun SerialDescriptor.toParquetMessageType(name: String): Type {
-        val repetition = if (isNullable) Type.Repetition.OPTIONAL else Type.Repetition.REQUIRED
+    private fun SerialDescriptor.toParquetMessageType(name: String, topLevel: Boolean = false): Type {
+        val repetition = if (isNullable || topLevel) Type.Repetition.OPTIONAL else Type.Repetition.REQUIRED
         fun primitive(type: PrimitiveTypeName) = Types.primitive(type, repetition)
 
         return when (kind) {
@@ -125,9 +128,18 @@ class ParquetReportHandler(
                 .key(getElementDescriptor(0).toParquetMessageType("key"))
                 .value(getElementDescriptor(1).toParquetMessageType("value"))
 
-            StructureKind.CLASS -> Types.buildGroup(repetition).also {
-                for ((name, descriptor) in elementNames zip elementDescriptors) {
-                    it.addField(descriptor.toParquetMessageType(name))
+            StructureKind.CLASS -> {
+                if (isInline) {
+                    // Special case: inline classes are serialized as their underlying type, but with the top-level name
+                    require(elementsCount == 1) { "Inline classes must have exactly one element" }
+                    return getElementDescriptor(0).toParquetMessageType(name, topLevel = topLevel)
+                } else {
+                    // General case: build a group with each class member as a field
+                    Types.buildGroup(repetition).also {
+                        for ((name, descriptor) in elementNames zip elementDescriptors) {
+                            it.addField(descriptor.toParquetMessageType(name))
+                        }
+                    }
                 }
             }
 
@@ -170,20 +182,27 @@ class ParquetReportHandler(
                 private lateinit var parquetEncoder: ParquetEncoder
 
                 @Deprecated("Deprecated in Java")
-                override fun init(configuration: Configuration?): WriteContext = WriteContext(
-                    Types.buildMessage()
+                override fun init(configuration: Configuration?): WriteContext {
+                    val schema = Types.buildMessage()
                         // Timezone support appears to be less common than I'd like - to keep this highly-compatible,
                         // leave the timezone information off, and assume the reader will know what timezone is appropriate.
                         .addField(Types.required(PrimitiveTypeName.INT64)
-                            .`as`(LogicalTypeAnnotation.timestampType(false, LogicalTypeAnnotation.TimeUnit.NANOS))
-                            .named("timestamp"))
-                        .addFields(*channelInfo.values
-                            .sortedBy { it.index }
-                            .map { it.type }
-                            .toTypedArray())
-                        .named("root"),
-                    mapOf(),
-                )
+                            .`as`(LogicalTypeAnnotation.timestampType(
+                                false,
+                                LogicalTypeAnnotation.TimeUnit.NANOS
+                            ))
+                            .named("timestamp")
+                        ).addFields(
+                            *channelInfo.values
+                                .sortedBy { it.index }
+                                .map { it.type }
+                                .toTypedArray())
+                        .named("root")
+                    return WriteContext(
+                            schema,
+                        mapOf(),
+                    )
+                }
 
                 override fun prepareForWrite(recordConsumer: RecordConsumer) {
                     this.recordConsumer = recordConsumer

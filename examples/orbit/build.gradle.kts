@@ -22,6 +22,7 @@ dependencies {
     implementation("org.apache.hadoop:hadoop-client-runtime:3.4.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
     // Provides an SLF4J binding to suppress "No SLF4J providers were found" warnings.
     implementation("org.slf4j:slf4j-nop:2.0.16")
