@@ -758,6 +758,7 @@ object ParquetReportHandlerTest {
 
         // TODO: Once https://github.com/Kotlin/dataframe/issues/2041 is fixed,
         //   remove the "ANYTHING" placeholders for the activities channel and verify we're writing nulls where we expect them.
+        //   According to the comments on that issue and the linked PR, the correct output will put null in each activity sub-column.
 
         @Test
         fun `simulator reports stdout and stderr as primitive string columns`() {
@@ -849,9 +850,6 @@ object ParquetReportHandlerTest {
                 rowEquals(t1 + 6.hours, ANYTHING, null, null, null, null, null, null, null, "end")
             }
         }
-
-        // TODO: Figure out why the activities channel has records with all values empty, rather than nulls
-        //   If we can fix that, change all the "ANYTHING" placeholders for nulls to make the test more explicit.
     }
 
     private val DataFrame<*>.shape: Pair<Int, Int> get() = rowsCount() to columnsCount()
