@@ -28,7 +28,7 @@ import java.nio.file.Path
 class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,
-) : ChannelizedReportHandler {
+) : ChannelizedReportHandler, AutoCloseable {
     private data class ChannelInfo(
         val index: Int,
         val type: Type,
@@ -41,8 +41,21 @@ class ParquetReportHandler(
     private var writer: ParquetWriter<ChannelData<*>>? = null
 
     private val initialized: Boolean get() = writer != null
+    private fun initialize() {
+        // Lock in our schema and build our writer
+        // In so doing, we automatically flip virtual property `initialized` to true
+        writer = ChannelDataParquetWriterBuilder(path, serializersModule, channelInfo).build()
+        // Flush all initial reports
+        initialReports.forEach { writer!!.write(it) }
+        initialReports.clear()
+    }
+
+    private var closed = false
 
     override fun <T> initChannel(metadata: ChannelReport.ChannelMetadata<T>) {
+        check(!closed) {
+            "Attempting to use a closed ${this::class.simpleName}"
+        }
         check(!initialized) {
             "Cannot initialize a channel on a report handler that has already been fully initialized"
         }
@@ -64,6 +77,9 @@ class ParquetReportHandler(
     }
 
     override fun <T> report(data: ChannelData<T>) {
+        check(!closed) {
+            "Attempting to use a closed ${this::class.simpleName}"
+        }
         if (initialReports.isEmpty() || initialReports.first().time == data.time) {
             // This is (potentially) an initial report, so buffer it until time progresses
             initialReports.add(data)
@@ -72,12 +88,7 @@ class ParquetReportHandler(
 
         if (!initialized) {
             // This is the first certainly-not-initial report, so all channels are now initialized
-            // Lock in our schema and build our writer
-            // In so doing, we automatically flip virtual property `initialized` to true
-            writer = ChannelDataParquetWriterBuilder(path, serializersModule, channelInfo).build()
-            // Flush all initial reports
-            initialReports.forEach { writer!!.write(it) }
-            initialReports.clear()
+            initialize()
         }
 
         writer!!.write(data)
@@ -127,6 +138,18 @@ class ParquetReportHandler(
         }.named(name)
     }
 
+    override fun close() {
+        // Silently tolerate re-closing an already-closed report handler
+        if (closed) return
+        // In rare cases, we may only see reports at the initial time.
+        // In these cases, we must initialize to flush those reports, before we close.
+        if (!initialized) initialize()
+        // Having asserted that we're initialized, pass on the request to close to our writer.
+        writer!!.close()
+        // Finally, mark ourselves as closed
+        closed = true
+    }
+
     private class ChannelDataParquetWriterBuilder(
         path: Path,
         private val serializersModule: SerializersModule,
@@ -145,10 +168,10 @@ class ParquetReportHandler(
                 @Deprecated("Deprecated in Java")
                 override fun init(configuration: Configuration?): WriteContext = WriteContext(
                     Types.buildMessage()
-                        // TODO: Should we consider the possibility that the user didn't do their sim in UTC?
-                        //   I think it's probably better to just assume they did, at least for now.
+                        // Timezone support appears to be less common than I'd like - to keep this highly-compatible,
+                        // leave the timezone information off, and assume the reader will know what timezone is appropriate.
                         .addField(Types.required(PrimitiveTypeName.INT64)
-                            .`as`(LogicalTypeAnnotation.timestampType(true, LogicalTypeAnnotation.TimeUnit.NANOS))
+                            .`as`(LogicalTypeAnnotation.timestampType(false, LogicalTypeAnnotation.TimeUnit.NANOS))
                             .named("timestamp"))
                         .addFields(*channelInfo.values
                             .sortedBy { it.index }

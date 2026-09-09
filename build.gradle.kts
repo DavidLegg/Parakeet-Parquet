@@ -1,5 +1,7 @@
 plugins {
-    kotlin("jvm") version "2.4.0"
+    kotlin("jvm") version "2.4.10"
+
+    kotlin("plugin.dataframe") version "2.4.10"
 }
 
 group = "org.example"
@@ -14,15 +16,18 @@ dependencies {
 
     implementation("gov.nasa.jpl.parakeet:parakeet")
 
-    // Not sure which of these are strictly needed.
-    // TODO: Once a working implementation is in place, try removing each of these to cut down dependencies.
     implementation("org.apache.parquet:parquet-common:1.17.0")
     implementation("org.apache.parquet:parquet-encoding:1.17.0")
     implementation("org.apache.parquet:parquet-column:1.17.0")
     implementation("org.apache.parquet:parquet-hadoop:1.17.0")
     implementation("org.apache.hadoop:hadoop-client-api:3.4.0")
+    implementation("org.apache.hadoop:hadoop-client-runtime:3.4.0")
 
-    implementation("org.apache.parquet:parquet-avro:1.17.0")
+    // Kotlin's DataFrame library is used to read Parquet files in tests, verifying what we wrote is correct.
+    testImplementation("org.jetbrains.kotlinx:dataframe:1.0.0-rc01")
+
+    // Provides an SLF4J binding so tests don't print "No SLF4J providers were found" warnings.
+    testImplementation("org.slf4j:slf4j-nop:2.0.16")
 }
 
 kotlin {
@@ -31,4 +36,8 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+    jvmArgs(
+        // Required to read parquet files
+        "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    )
 }
