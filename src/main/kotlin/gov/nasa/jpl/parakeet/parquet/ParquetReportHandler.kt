@@ -80,15 +80,17 @@ class ParquetReportHandler(
         check(!closed) {
             "Attempting to use a closed ${this::class.simpleName}"
         }
-        if (initialReports.isEmpty() || initialReports.first().time == data.time) {
-            // This is (potentially) an initial report, so buffer it until time progresses
-            initialReports.add(data)
-            return
-        }
-
         if (!initialized) {
-            // This is the first certainly-not-initial report, so all channels are now initialized
-            initialize()
+            if (initialReports.isEmpty() || initialReports.first().time == data.time) {
+                // This is (potentially) an initial report, so buffer it until time progresses
+                initialReports.add(data)
+                return
+            } else {
+                // This is the first certainly-not-initial report, so all channels are now initialized
+                // Initialize the writer and flush the initial reports
+                initialize()
+                // Then fall through to the general case
+            }
         }
 
         writer!!.write(data)

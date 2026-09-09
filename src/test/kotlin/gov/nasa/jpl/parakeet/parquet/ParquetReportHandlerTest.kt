@@ -5,15 +5,17 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelMetadata
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.Metadatum
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
+import gov.nasa.jpl.parakeet.parquet.TestUtils.checkDataFrame
 import gov.nasa.jpl.parakeet.parquet.TestUtils.component6
 import gov.nasa.jpl.parakeet.parquet.TestUtils.component7
+import gov.nasa.jpl.parakeet.parquet.TestUtils.rowEquals
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import org.jetbrains.kotlinx.dataframe.DataFrame
-import org.jetbrains.kotlinx.dataframe.DataRow
-import org.jetbrains.kotlinx.dataframe.api.asColumnGroup
-import org.jetbrains.kotlinx.dataframe.api.asFrameColumn
+import org.jetbrains.kotlinx.dataframe.api.rows
 import org.jetbrains.kotlinx.dataframe.columns.ColumnGroup
 import org.jetbrains.kotlinx.dataframe.columns.FrameColumn
 import org.jetbrains.kotlinx.dataframe.io.readParquet
@@ -24,11 +26,12 @@ import kotlin.io.path.createTempDirectory
 import kotlin.io.path.div
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
-import kotlin.reflect.full.isSubtypeOf
 import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
 
 object ParquetReportHandlerTest {
     private val SERIALIZERS_MODULE = SerializersModule {
@@ -246,6 +249,38 @@ object ParquetReportHandlerTest {
             assertIs<FrameColumn<*>>(mapCol)
         }
 
+        @Test
+        fun `a parquet report handler shall include each primitive datum as a row in the parquet file`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            val t3 = t2 + 1.days
+            val t4 = t3 + 1.days
+            val t5 = t4 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val intChannel = parquetReportHandler.initChannel<Int>("int_channel")
+                intChannel.report(t1, 1)
+                intChannel.report(t2, 2)
+                intChannel.report(t3, 3)
+                intChannel.report(t4, 4)
+                intChannel.report(t5, 5)
+            }
+
+            val df = DataFrame.readParquet(path)
+            assertEquals(5 to 2, df.shape())
+
+            checkDataFrame(df, "timestamp", "int_channel") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1)
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), 2)
+                rowEquals(t3.toLocalDateTime(TimeZone.UTC), 3)
+                rowEquals(t4.toLocalDateTime(TimeZone.UTC), 4)
+                rowEquals(t5.toLocalDateTime(TimeZone.UTC), 5)
+            }
+        }
+
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,
             metadata: Map<String, Metadatum> = mapOf()
@@ -254,16 +289,26 @@ object ParquetReportHandlerTest {
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: Name,
             metadata: Map<String, Metadatum> = mapOf()
-        ) = initChannel(
-            ChannelMetadata<T>(
-                name,
-                metadata,
-                typeOf<T>(),
-                typeOf<ChannelData<T>>(),
-                typeOf<ChannelMetadata<T>>()
+        ): TestChannel<T> {
+            initChannel(
+                ChannelMetadata<T>(
+                    name,
+                    metadata,
+                    typeOf<T>(),
+                    typeOf<ChannelData<T>>(),
+                    typeOf<ChannelMetadata<T>>()
+                )
             )
-        )
+            // Re-use the name automatically, to reduce test boilerplate
+            return TestChannel { time, value ->
+                report(ChannelData(name, time, value))
+            }
+        }
 
+        /** A version of a channel outside of simulation, for [DirectTests] only. */
+        fun interface TestChannel<T> {
+            fun report(time: Instant, value: T)
+        }
     }
 
     private fun DataFrame<*>.shape(): Pair<Int, Int> = rowsCount() to columnsCount()
