@@ -5,7 +5,11 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.descriptors.*
+import kotlinx.serialization.encoding.CompositeEncoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.serializer
@@ -13,6 +17,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.parquet.hadoop.ParquetWriter
 import org.apache.parquet.hadoop.api.WriteSupport
 import org.apache.parquet.io.LocalOutputFile
+import org.apache.parquet.io.api.Binary
 import org.apache.parquet.io.api.RecordConsumer
 import org.apache.parquet.schema.LogicalTypeAnnotation
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
@@ -24,7 +29,13 @@ class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,
 ) : ChannelizedReportHandler {
-    private val channelTypes: MutableList<Type> = mutableListOf()
+    private data class ChannelInfo(
+        val index: Int,
+        val type: Type,
+        val serializer: KSerializer<*>,
+    )
+
+    private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
     private val initialReports: MutableList<ChannelData<*>> = mutableListOf()
 
     private var writer: ParquetWriter<ChannelData<*>>? = null
@@ -35,14 +46,21 @@ class ParquetReportHandler(
         check(!initialized) {
             "Cannot initialize a channel on a report handler that has already been fully initialized"
         }
+        val name = metadata.channel
+        require(name !in channelInfo) {
+            "Channel $name has already been initialized"
+        }
         val serializer = serializersModule.serializer(metadata.dataType)
-        // Regardless of whether the original channel is nullable, the parquet column must be nullable to account for missing data.
         if (serializer.descriptor.isNullable) {
             System.err.println("Channel ${metadata.channel} is nullable. Since null is used to indicate lack of a report at that time, null reports will be indistinguishable from lack of a report.")
         }
-        channelTypes.add(serializer.descriptor.nullable.toParquetMessageType(metadata.channel.toString()))
-
-        TODO("Not yet implemented")
+        channelInfo[name] = ChannelInfo(
+            // Add 1 to account for the timestamp field at index 0
+            channelInfo.size + 1,
+            // Regardless of whether the original channel is nullable, the parquet column must be nullable to account for missing data.
+            serializer.descriptor.nullable.toParquetMessageType(name.toString()),
+            serializer,
+        )
     }
 
     override fun <T> report(data: ChannelData<T>) {
@@ -55,7 +73,8 @@ class ParquetReportHandler(
         if (!initialized) {
             // This is the first certainly-not-initial report, so all channels are now initialized
             // Lock in our schema and build our writer
-            writer = ChannelDataParquetWriterBuilder(path, channelTypes).build()
+            // In so doing, we automatically flip virtual property `initialized` to true
+            writer = ChannelDataParquetWriterBuilder(path, serializersModule, channelInfo).build()
             // Flush all initial reports
             initialReports.forEach { writer!!.write(it) }
             initialReports.clear()
@@ -80,9 +99,9 @@ class ParquetReportHandler(
             // For now, just treat enums as general strings
             PrimitiveKind.STRING, SerialKind.ENUM -> primitive(PrimitiveTypeName.BINARY).`as`(LogicalTypeAnnotation.stringType())
             // Char, byte, and short don't exactly map over cleanly, but they're rarely used. I think this is a fine mapping.
-            PrimitiveKind.CHAR -> primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY).length(1).`as`(LogicalTypeAnnotation.stringType())
-            PrimitiveKind.BYTE -> primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY).length(1).`as`(LogicalTypeAnnotation.intType(8))
-            PrimitiveKind.SHORT -> primitive(PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY).length(2).`as`(LogicalTypeAnnotation.intType(16))
+            PrimitiveKind.CHAR -> primitive(PrimitiveTypeName.INT32).`as`(LogicalTypeAnnotation.intType(16, false))
+            PrimitiveKind.BYTE -> primitive(PrimitiveTypeName.INT32).`as`(LogicalTypeAnnotation.intType(8))
+            PrimitiveKind.SHORT -> primitive(PrimitiveTypeName.INT32).`as`(LogicalTypeAnnotation.intType(16))
 
             StructureKind.LIST -> Types.list(repetition)
                 .element(getElementDescriptor(0).toParquetMessageType(getElementName(0)))
@@ -110,20 +129,18 @@ class ParquetReportHandler(
 
     private class ChannelDataParquetWriterBuilder(
         path: Path,
-        private val channelTypes: List<Pair<Name, Type>>,
+        private val serializersModule: SerializersModule,
+        private val channelInfo: Map<Name, ChannelInfo>,
     ) : ParquetWriter.Builder<ChannelData<*>, ChannelDataParquetWriterBuilder>(
         LocalOutputFile(path)
     ) {
-        private val channelInfo: Map<Name, Pair<Int, Type>> =
-            // Add 1 to account for the timestamp field at index 0
-            channelTypes.withIndex().associate { (index, pair) -> pair.first to (index + 1 to pair.second) }
-
         override fun self(): ChannelDataParquetWriterBuilder = this
 
         @Deprecated("Deprecated in Java")
         override fun getWriteSupport(conf: Configuration?): WriteSupport<ChannelData<*>?> =
             object : WriteSupport<ChannelData<*>?>() {
                 private var recordConsumer: RecordConsumer? = null
+                private var parquetEncoder: ParquetEncoder? = null
 
                 @Deprecated("Deprecated in Java")
                 override fun init(configuration: Configuration?): WriteContext = WriteContext(
@@ -133,13 +150,17 @@ class ParquetReportHandler(
                         .addField(Types.required(PrimitiveTypeName.INT64)
                             .`as`(LogicalTypeAnnotation.timestampType(true, LogicalTypeAnnotation.TimeUnit.NANOS))
                             .named("timestamp"))
-                        .addFields(*channelTypes.map { it.second }.toTypedArray())
+                        .addFields(*channelInfo.values
+                            .sortedBy { it.index }
+                            .map { it.type }
+                            .toTypedArray())
                         .named("root"),
                     mapOf(),
                 )
 
                 override fun prepareForWrite(recordConsumer: RecordConsumer?) {
                     this.recordConsumer = recordConsumer
+                    this.parquetEncoder = ParquetEncoder(serializersModule, recordConsumer!!)
                 }
 
                 override fun write(record: ChannelData<*>?) {
@@ -151,16 +172,163 @@ class ParquetReportHandler(
                         addLong(record!!.time.epochSeconds * 1_000_000_000L + record.time.nanosecondsOfSecond)
                         endField("timestamp", 0)
 
-                        val (index, type) = channelInfo.getValue(record.channel)
+                        val (index, type, serializer) = channelInfo.getValue(record.channel)
                         // Get the name from type to avoid re-computing channel.name.toString(), since string-building can be expensive.
                         startField(type.name, index)
-                        // TODO: We need to run an appropriate serializer over the value here,
-                        //   with a custom encoder that passes values on to the record consumer.
+                        // TYPE SAFETY: We're using the serializer for the channel's declared data type.
+                        @Suppress("UNCHECKED_CAST")
+                        (serializer as KSerializer<Any?>).serialize(parquetEncoder!!, record.data)
                         endField(type.name, index)
 
                         endMessage()
                     }
                 }
             }
+    }
+
+    private class ParquetEncoder(
+        override val serializersModule: SerializersModule,
+        private val recordConsumer: RecordConsumer
+    ) : Encoder {
+        @ExperimentalSerializationApi
+        override fun encodeNull() {
+            // Do nothing - null is not encoded in parquet, just leave the field blank
+        }
+
+        override fun encodeBoolean(value: Boolean) {
+            recordConsumer.addBoolean(value)
+        }
+
+        override fun encodeByte(value: Byte) {
+            recordConsumer.addInteger(value.toInt())
+        }
+
+        override fun encodeShort(value: Short) {
+            recordConsumer.addInteger(value.toInt())
+        }
+
+        override fun encodeChar(value: Char) {
+            recordConsumer.addInteger(value.code)
+        }
+
+        override fun encodeInt(value: Int) {
+            recordConsumer.addInteger(value)
+        }
+
+        override fun encodeLong(value: Long) {
+            recordConsumer.addLong(value)
+        }
+
+        override fun encodeFloat(value: Float) {
+            recordConsumer.addFloat(value)
+        }
+
+        override fun encodeDouble(value: Double) {
+            recordConsumer.addDouble(value)
+        }
+
+        override fun encodeString(value: String) {
+            recordConsumer.addBinary(Binary.fromConstantByteArray(value.encodeToByteArray()))
+        }
+
+        override fun encodeEnum(enumDescriptor: SerialDescriptor, index: Int) {
+            encodeString(enumDescriptor.getElementName(index))
+        }
+
+        override fun encodeInline(descriptor: SerialDescriptor): Encoder {
+            return this
+        }
+
+        override fun beginStructure(descriptor: SerialDescriptor): CompositeEncoder {
+            recordConsumer.startGroup()
+            return object : CompositeEncoder {
+                override val serializersModule: SerializersModule
+                    get() = this@ParquetEncoder.serializersModule
+
+                override fun endStructure(descriptor: SerialDescriptor) {
+                    recordConsumer.endGroup()
+                }
+
+                override fun encodeBooleanElement(descriptor: SerialDescriptor, index: Int, value: Boolean) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeBoolean(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeByteElement(descriptor: SerialDescriptor, index: Int, value: Byte) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeByte(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeShortElement(descriptor: SerialDescriptor, index: Int, value: Short) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeShort(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeCharElement(descriptor: SerialDescriptor, index: Int, value: Char) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeChar(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeIntElement(descriptor: SerialDescriptor, index: Int, value: Int) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeInt(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeLongElement(descriptor: SerialDescriptor, index: Int, value: Long) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeLong(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeFloatElement(descriptor: SerialDescriptor, index: Int, value: Float) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeFloat(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeDoubleElement(descriptor: SerialDescriptor, index: Int, value: Double) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeDouble(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeStringElement(descriptor: SerialDescriptor, index: Int, value: String) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    encodeString(value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                override fun encodeInlineElement(descriptor: SerialDescriptor, index: Int): Encoder {
+                    return this@ParquetEncoder
+                }
+
+                override fun <T> encodeSerializableElement(
+                    descriptor: SerialDescriptor,
+                    index: Int,
+                    serializer: SerializationStrategy<T>,
+                    value: T,
+                ) {
+                    recordConsumer.startField(descriptor.getElementName(index), index)
+                    serializer.serialize(this@ParquetEncoder, value)
+                    recordConsumer.endField(descriptor.getElementName(index), index)
+                }
+
+                @ExperimentalSerializationApi
+                override fun <T : Any> encodeNullableSerializableElement(
+                    descriptor: SerialDescriptor,
+                    index: Int,
+                    serializer: SerializationStrategy<T>,
+                    value: T?,
+                ) {
+                    // nulls are not encoded in parquet, you just leave the field out
+                    if (value != null) encodeSerializableElement(descriptor, index, serializer, value)
+                }
+            }
+        }
     }
 }
