@@ -40,6 +40,8 @@ fun main(vararg args: String) {
         val outputPath = Path(args[0]).absolute()
         val numYears = args[1].toInt()
 
+        outputPath.deleteIfExists()
+
         val duration = measureTime {
             runSimulation(outputPath, numYears, parallel)
         }
@@ -76,7 +78,7 @@ fun gridTest(outputDir: Path, reps: Int) {
                             ))
                             System.out.flush()
 
-                            val outputPath = outputDir / "orbit-$numYears-year.$threading.$format"
+                            val outputPath = outputDir / "orbit-grid-test.$format"
                             outputPath.deleteIfExists()
                             val duration = measureTime {
                                 runSimulation(outputPath, numYears, parallel)
@@ -84,7 +86,13 @@ fun gridTest(outputDir: Path, reps: Int) {
                             runtimeCsvWriter.write("$numYears,$threading,$format,${duration.toDouble(SECONDS)}\n")
                             runtimeCsvWriter.flush()
 
-                            println(" [%5.1f s, %6.1f MB]".format(duration.toDouble(SECONDS), outputPath.fileSize() / (1024.0 * 1024.0)));
+                            val runtime_s = duration.toDouble(SECONDS)
+                            val speed_yr_per_s = numYears / runtime_s
+                            println(" [%5.1f s, %6.1f MB, %5.1f yr/s]".format(
+                                runtime_s,
+                                outputPath.fileSize() / (1024.0 * 1024.0),
+                                speed_yr_per_s,
+                            ))
                         }
                     }
                 }
