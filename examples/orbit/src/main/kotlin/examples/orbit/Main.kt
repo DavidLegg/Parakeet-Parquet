@@ -82,6 +82,7 @@ fun gridTest(outputDir: Path, reps: Int) {
                                 runSimulation(outputPath, numYears, parallel)
                             }
                             runtimeCsvWriter.write("$numYears,$threading,$format,${duration.toDouble(SECONDS)}\n")
+                            runtimeCsvWriter.flush()
 
                             println(" [%5.1f s, %6.1f MB]".format(duration.toDouble(SECONDS), outputPath.fileSize() / (1024.0 * 1024.0)));
                         }
