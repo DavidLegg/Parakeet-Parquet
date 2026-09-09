@@ -498,6 +498,54 @@ object ParquetReportHandlerTest {
             }
         }
 
+        // TODO: Debug this test.
+        //   I think we should log every call to RecordConsumer to see exactly what we're encoding
+        @Test
+        fun `parquet report handler supports multiple record channels`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val recordChannel1 = parquetReportHandler.initChannel<TestRecord>("record_channel_1")
+                val recordChannel2 = parquetReportHandler.initChannel<TestRecord>("record_channel_2")
+                recordChannel1.report(t1, TestRecord(1, 2L, 3.0f, 4.0, false, "test_1"))
+                recordChannel2.report(t2, TestRecord(10, 20L, 30.0f, 40.0, true, "test_2"))
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "record_channel_1", "record_channel_2") {
+                row {
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertEquals(1, it["i"])
+                        assertEquals(2L, it["l"])
+                        assertEquals(3.0f, it["f"])
+                        assertEquals(4.0, it["d"])
+                        assertEquals(false, it["b"])
+                        assertEquals("test_1", it["s"])
+                    }
+                    assertEquals(null)
+                }
+                row {
+                    assertEquals(t2.toLocalDateTime(TimeZone.UTC))
+                    assertEquals(null)
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertEquals(10, it["i"])
+                        assertEquals(20L, it["l"])
+                        assertEquals(30.0f, it["f"])
+                        assertEquals(40.0, it["d"])
+                        assertEquals(true, it["b"])
+                        assertEquals("test_2", it["s"])
+                    }
+                }
+            }
+        }
+
         @Test
         fun `parquet report handler supports list types`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
