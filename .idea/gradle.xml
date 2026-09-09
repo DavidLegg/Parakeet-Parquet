@@ -32,6 +32,8 @@
           <set>
             <option value="$PROJECT_DIR$/../Parakeet" />
             <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/examples" />
+            <option value="$PROJECT_DIR$/examples/orbit" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/01_hello_world" />

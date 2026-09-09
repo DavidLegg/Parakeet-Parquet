@@ -4,7 +4,7 @@ plugins {
     kotlin("plugin.dataframe") version "2.4.10"
 }
 
-group = "org.example"
+group = "gov.nasa.jpl.parakeet"
 version = "1.0-SNAPSHOT"
 
 repositories {

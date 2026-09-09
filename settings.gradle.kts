@@ -4,3 +4,5 @@ plugins {
 rootProject.name = "Parakeet-Parquet"
 
 includeBuild("../Parakeet")
+
+include(":examples:orbit")
