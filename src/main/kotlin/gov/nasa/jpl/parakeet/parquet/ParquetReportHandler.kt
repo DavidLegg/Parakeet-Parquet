@@ -119,8 +119,9 @@ class ParquetReportHandler(
                 .element(getElementDescriptor(0).toParquetMessageType("element"))
 
             StructureKind.MAP -> Types.map(repetition)
-                .key(getElementDescriptor(0).toParquetMessageType(getElementName(0)))
-                .value(getElementDescriptor(1).toParquetMessageType(getElementName(1)))
+                // Parquet schema requires that the key and value names be "key" and "value"
+                .key(getElementDescriptor(0).toParquetMessageType("key"))
+                .value(getElementDescriptor(1).toParquetMessageType("value"))
 
             StructureKind.CLASS -> Types.buildGroup(repetition).also {
                 for ((name, descriptor) in elementNames zip elementDescriptors) {

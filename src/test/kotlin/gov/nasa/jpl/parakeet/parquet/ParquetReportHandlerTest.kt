@@ -13,7 +13,9 @@ import kotlinx.serialization.modules.SerializersModule
 import org.jetbrains.kotlinx.dataframe.DataFrame
 import org.jetbrains.kotlinx.dataframe.DataRow
 import org.jetbrains.kotlinx.dataframe.api.asColumnGroup
+import org.jetbrains.kotlinx.dataframe.api.asFrameColumn
 import org.jetbrains.kotlinx.dataframe.columns.ColumnGroup
+import org.jetbrains.kotlinx.dataframe.columns.FrameColumn
 import org.jetbrains.kotlinx.dataframe.io.readParquet
 import org.jetbrains.kotlinx.dataframe.name
 import org.jetbrains.kotlinx.dataframe.type
@@ -214,6 +216,34 @@ object ParquetReportHandlerTest {
             //   }
             // }
             assertEquals(List::class, listCol.typeClass)
+        }
+
+        @Test
+        fun `a parquet report handler shall choose appropriate map types for map channels`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                parquetReportHandler.initChannel<Map<String, Int>>("map_channel")
+            }
+
+            val df = DataFrame.readParquet(path)
+            assertEquals(0 to 2, df.shape())
+            val (timestampCol, mapCol) = df.columns()
+            assertEquals("timestamp", timestampCol.name)
+            assertEquals(typeOf<LocalDateTime>(), timestampCol.type)
+            assertEquals("map_channel", mapCol.name)
+            // Manually verified at the time of writing that schema is:
+            // optional group map_channel (MAP) {
+            //   repeated group key_value {
+            //     required binary key (STRING);
+            //     required int32 value;
+            //   }
+            // }
+            // When run through Kotlin's DataFrame library, this becomes a "frame column" but the contents of the schema are lost.
+            // I suspect the DataFrame library is hoping to infer common keys among the entries and shred the maps into columns.
+            assertIs<FrameColumn<*>>(mapCol)
         }
 
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
