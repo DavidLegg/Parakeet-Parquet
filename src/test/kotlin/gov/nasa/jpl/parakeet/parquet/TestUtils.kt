@@ -67,7 +67,7 @@ object TestUtils {
 
     fun DataRowChecker.assertEquals(expectedValue: Any?) {
         check { actualValue ->
-            assertEquals(expectedValue, actualValue)
+            if (expectedValue != ANYTHING) assertEquals(expectedValue, actualValue)
         }
     }
 
@@ -78,4 +78,9 @@ object TestUtils {
             }
         }
     }
+
+    /**
+     * Sentinel value used by [assertEquals] and [rowEquals] to indicate that any actual value is acceptable.
+     */
+    object ANYTHING
 }

@@ -1,10 +1,20 @@
 package gov.nasa.jpl.parakeet.parquet
 
+import gov.nasa.jpl.parakeet.foundation.Simulator
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelMetadata
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.Metadatum
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
+import gov.nasa.jpl.parakeet.foundation.tasks.InitScope.Companion.spawn
+import gov.nasa.jpl.parakeet.foundation.tasks.Reactions.every
+import gov.nasa.jpl.parakeet.foundation.tasks.ReportScope.Companion.report
+import gov.nasa.jpl.parakeet.foundation.tasks.ResourceScope.Companion.now
+import gov.nasa.jpl.parakeet.foundation.tasks.SimulationScope.Companion.stderr
+import gov.nasa.jpl.parakeet.foundation.tasks.SimulationScope.Companion.stdout
+import gov.nasa.jpl.parakeet.foundation.tasks.TaskOperations.delay
+import gov.nasa.jpl.parakeet.foundation.tasks.task
 import gov.nasa.jpl.parakeet.kernel.Name
+import gov.nasa.jpl.parakeet.parquet.TestUtils.ANYTHING
 import gov.nasa.jpl.parakeet.parquet.TestUtils.assertEquals
 import gov.nasa.jpl.parakeet.parquet.TestUtils.checkDataFrame
 import gov.nasa.jpl.parakeet.parquet.TestUtils.component6
@@ -32,6 +42,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 object ParquetReportHandlerTest {
@@ -268,11 +280,11 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "int_channel") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1)
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), 2)
-                rowEquals(t3.toLocalDateTime(TimeZone.UTC), 3)
-                rowEquals(t4.toLocalDateTime(TimeZone.UTC), 4)
-                rowEquals(t5.toLocalDateTime(TimeZone.UTC), 5)
+                rowEquals(t1, 1)
+                rowEquals(t2, 2)
+                rowEquals(t3, 3)
+                rowEquals(t4, 4)
+                rowEquals(t5, 5)
             }
         }
 
@@ -300,11 +312,11 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 2, null)
-                rowEquals(t3.toLocalDateTime(TimeZone.UTC), null, null, 3)
-                rowEquals(t4.toLocalDateTime(TimeZone.UTC), null, 4, null)
-                rowEquals(t5.toLocalDateTime(TimeZone.UTC), 5, null, null)
+                rowEquals(t1, 1, null, null)
+                rowEquals(t2, null, 2, null)
+                rowEquals(t3, null, null, 3)
+                rowEquals(t4, null, 4, null)
+                rowEquals(t5, 5, null, null)
             }
         }
 
@@ -328,11 +340,11 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 2, null)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, null, 3)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 4, null)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 5, null, null)
+                rowEquals(t1, 1, null, null)
+                rowEquals(t1, null, 2, null)
+                rowEquals(t1, null, null, 3)
+                rowEquals(t1, null, 4, null)
+                rowEquals(t1, 5, null, null)
             }
         }
 
@@ -358,11 +370,11 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 2, null)
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, null, 3)
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 4, null)
-                rowEquals(t3.toLocalDateTime(TimeZone.UTC), 5, null, null)
+                rowEquals(t1, 1, null, null)
+                rowEquals(t1, null, 2, null)
+                rowEquals(t1, null, null, 3)
+                rowEquals(t2, null, 4, null)
+                rowEquals(t3, 5, null, null)
             }
         }
 
@@ -416,12 +428,12 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "int_channel", "long_channel", "float_channel", "double_channel", "boolean_channel", "string_channel") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null, null, null, null)
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 2L, null, null, null, null)
-                rowEquals(t3.toLocalDateTime(TimeZone.UTC), null, null, 3.0f, null, null, null)
-                rowEquals(t4.toLocalDateTime(TimeZone.UTC), null, null, null, 4.0, null, null)
-                rowEquals(t5.toLocalDateTime(TimeZone.UTC), null, null, null, null, true, null)
-                rowEquals(t6.toLocalDateTime(TimeZone.UTC), null, null, null, null, null, "test")
+                rowEquals(t1, 1, null, null, null, null, null)
+                rowEquals(t2, null, 2L, null, null, null, null)
+                rowEquals(t3, null, null, 3.0f, null, null, null)
+                rowEquals(t4, null, null, null, 4.0, null, null)
+                rowEquals(t5, null, null, null, null, true, null)
+                rowEquals(t6, null, null, null, null, null, "test")
             }
         }
 
@@ -499,8 +511,8 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "list_channel") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf(1))
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf(2, 3, 4))
+                rowEquals(t1, listOf(1))
+                rowEquals(t2, listOf(2, 3, 4))
             }
         }
 
@@ -520,8 +532,8 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "list_channel") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf<Int>())
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf<Int>())
+                rowEquals(t1, listOf<Int>())
+                rowEquals(t2, listOf<Int>())
             }
         }
 
@@ -545,10 +557,10 @@ object ParquetReportHandlerTest {
 
             val df = DataFrame.readParquet(path)
             checkDataFrame(df, "timestamp", "list_channel") {
-                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf(1, null, 2))
-                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf(null, 3))
-                rowEquals(t3.toLocalDateTime(TimeZone.UTC), listOf(4, null))
-                rowEquals(t4.toLocalDateTime(TimeZone.UTC), listOf(null, 5, null))
+                rowEquals(t1, listOf(1, null, 2))
+                rowEquals(t2, listOf(null, 3))
+                rowEquals(t3, listOf(4, null))
+                rowEquals(t4, listOf(null, 5, null))
             }
         }
 
@@ -683,5 +695,50 @@ object ParquetReportHandlerTest {
         }
     }
 
+    /**
+     * If [DirectTests] are passing, move on to testing the report handler with a simulator.
+     *
+     * Where [DirectTests] are strict unit tests, these are integration tests.
+     * These test check that the simulator drives the report handler similarly to how we drove it directly.
+     */
+    class SimulatorTests {
+        // Note: Since we're just interested in testing the output handling,
+        // there's no need to actually build a model class and activity classes.
+        // Instead, we'll define models inline and drive them with daemon tasks.
+
+        @Test
+        fun `simulator reports stdout and stderr as primitive string columns`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                Simulator(parquetReportHandler, t1) {
+                    spawn("Clock chime", every(6.hours) {
+                        val hourOfDay = now().toLocalDateTime(TimeZone.UTC).hour
+                        stdout.report("It's ${hourOfDay.toString().padStart(2, '0')}:00")
+                    })
+
+                    spawn("Warning", task {
+                        delay(23.hours + 59.minutes)
+                        stderr.report("The end (of today) is nigh!")
+                    })
+                }.runUntil(t1 + 24.hours)
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "activities", "stdout", "stderr") {
+                rowEquals(t1 + 6.hours, ANYTHING, "It's 06:00", null)
+                rowEquals(t1 + 12.hours, ANYTHING, "It's 12:00", null)
+                rowEquals(t1 + 18.hours, ANYTHING, "It's 18:00", null)
+                rowEquals(t1 + 23.hours + 59.minutes, ANYTHING, null, "The end (of today) is nigh!")
+            }
+        }
+    }
+
     private val DataFrame<*>.shape: Pair<Int, Int> get() = rowsCount() to columnsCount()
+    private fun TestUtils.DataFrameChecker.rowEquals(timestamp: Instant, vararg expectedValues: Any?) {
+        rowEquals(timestamp.toLocalDateTime(TimeZone.UTC), *expectedValues)
+    }
 }
