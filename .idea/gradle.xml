@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GradleSettings">
+    <option name="linkedExternalProjectsSettings">
+      <GradleProjectSettings>
+        <compositeConfiguration>
+          <compositeBuild compositeDefinitionSource="SCRIPT">
+            <builds>
+              <build path="$PROJECT_DIR$/../Parakeet" name="parakeet">
+                <projects>
+                  <project path="$PROJECT_DIR$/../Parakeet" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/01_hello_world" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/02_intro_to_resources" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/03_intro_to_tasks" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/04_delay" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/05_await_and_conditions" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/06_reactions" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/util" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
+                </projects>
+              </build>
+            </builds>
+          </compositeBuild>
+        </compositeConfiguration>
+        <option name="externalProjectPath" value="$PROJECT_DIR$" />
+        <option name="modules">
+          <set>
+            <option value="$PROJECT_DIR$/../Parakeet" />
+            <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/01_hello_world" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/02_intro_to_resources" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/03_intro_to_tasks" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/04_delay" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/05_await_and_conditions" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/06_reactions" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/util" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
+          </set>
+        </option>
+        <option name="myGradleHome" value="" />
+      </GradleProjectSettings>
+    </option>
+  </component>
+</project>
