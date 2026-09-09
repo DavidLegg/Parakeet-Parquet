@@ -14,7 +14,6 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.modules.SerializersModule
 import org.jetbrains.kotlinx.dataframe.DataFrame
 import org.jetbrains.kotlinx.dataframe.DataRow
 import org.jetbrains.kotlinx.dataframe.columns.ColumnGroup
@@ -36,10 +35,6 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 
 object ParquetReportHandlerTest {
-    private val SERIALIZERS_MODULE = SerializersModule {
-        // TODO
-    }
-
     /**
      * To start, drive the report handler directly, without a simulator.
      * This lets us test very specific use cases with minimal dependencies.
@@ -51,7 +46,7 @@ object ParquetReportHandlerTest {
             val path = directory / "test.parquet"
             assert(!path.exists())
 
-            ParquetReportHandler(path).use { parquetReportHandler -> }
+            ParquetReportHandler(path).use { _ -> }
 
             assert(path.exists())
             // Even an "empty" report file has some metadata.
@@ -67,7 +62,7 @@ object ParquetReportHandlerTest {
             val path = directory / "test.parquet"
             assert(!path.exists())
 
-            ParquetReportHandler(path).use { parquetReportHandler -> }
+            ParquetReportHandler(path).use { _ -> }
 
             val df = DataFrame.readParquet(path)
             assertEquals(0 to 1, df.shape)
@@ -502,10 +497,11 @@ object ParquetReportHandlerTest {
                 listChannel.report(t2, listOf(2, 3, 4))
             }
 
-            assert(path.exists())
-            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
-            // does not support reading parquet files with lists containing more than one element.
-            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "list_channel") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf(1))
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf(2, 3, 4))
+            }
         }
 
         @Test
@@ -522,10 +518,11 @@ object ParquetReportHandlerTest {
                 listChannel.report(t2, listOf())
             }
 
-            assert(path.exists())
-            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
-            // does not support reading parquet files with lists containing more than one element.
-            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "list_channel") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf<Int>())
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf<Int>())
+            }
         }
 
         @Test
@@ -546,10 +543,13 @@ object ParquetReportHandlerTest {
                 listChannel.report(t4, listOf(null, 5, null))
             }
 
-            assert(path.exists())
-            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
-            // does not support reading parquet files with lists containing more than one element.
-            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "list_channel") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), listOf(1, null, 2))
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), listOf(null, 3))
+                rowEquals(t3.toLocalDateTime(TimeZone.UTC), listOf(4, null))
+                rowEquals(t4.toLocalDateTime(TimeZone.UTC), listOf(null, 5, null))
+            }
         }
 
         @Test
