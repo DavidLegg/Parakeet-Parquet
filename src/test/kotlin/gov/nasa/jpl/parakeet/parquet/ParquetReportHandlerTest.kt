@@ -15,13 +15,13 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import org.jetbrains.kotlinx.dataframe.DataFrame
-import org.jetbrains.kotlinx.dataframe.api.rows
 import org.jetbrains.kotlinx.dataframe.columns.ColumnGroup
 import org.jetbrains.kotlinx.dataframe.columns.FrameColumn
 import org.jetbrains.kotlinx.dataframe.io.readParquet
 import org.jetbrains.kotlinx.dataframe.name
 import org.jetbrains.kotlinx.dataframe.type
 import org.jetbrains.kotlinx.dataframe.typeClass
+import org.junit.jupiter.api.assertThrows
 import kotlin.io.path.createTempDirectory
 import kotlin.io.path.div
 import kotlin.io.path.exists
@@ -44,7 +44,7 @@ object ParquetReportHandlerTest {
      */
     class DirectTests {
         @Test
-        fun `a parquet report handler shall write an empty report file when used without initializing any channels`() {
+        fun `parquet report handler shall write an empty report file when used without initializing any channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -60,7 +60,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall include a common timestamp column`() {
+        fun `parquet report handler shall include a common timestamp column`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -75,7 +75,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall include initialized channels as separate columns`() {
+        fun `parquet report handler shall include initialized channels as separate columns`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -94,7 +94,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall use init order for parquet column order`() {
+        fun `parquet report handler shall use init order for parquet column order`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -119,7 +119,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall choose appropriate column types for primitive channels`() {
+        fun `parquet report handler shall choose appropriate column types for primitive channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -163,7 +163,7 @@ object ParquetReportHandlerTest {
         )
 
         @Test
-        fun `a parquet report handler shall choose appropriate group types for record channels`() {
+        fun `parquet report handler shall choose appropriate group types for record channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -195,7 +195,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall choose appropriate list types for list channels`() {
+        fun `parquet report handler shall choose appropriate list types for list channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -222,7 +222,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall choose appropriate map types for map channels`() {
+        fun `parquet report handler shall choose appropriate map types for map channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -250,7 +250,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `a parquet report handler shall include each primitive datum as a row in the parquet file`() {
+        fun `parquet report handler shall include each primitive datum as a row in the parquet file`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -270,14 +270,123 @@ object ParquetReportHandlerTest {
             }
 
             val df = DataFrame.readParquet(path)
-            assertEquals(5 to 2, df.shape())
-
             checkDataFrame(df, "timestamp", "int_channel") {
                 rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1)
                 rowEquals(t2.toLocalDateTime(TimeZone.UTC), 2)
                 rowEquals(t3.toLocalDateTime(TimeZone.UTC), 3)
                 rowEquals(t4.toLocalDateTime(TimeZone.UTC), 4)
                 rowEquals(t5.toLocalDateTime(TimeZone.UTC), 5)
+            }
+        }
+
+        @Test
+        fun `parquet report handler shall write null to columns other than the reported channel for each report`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            val t3 = t2 + 1.days
+            val t4 = t3 + 1.days
+            val t5 = t4 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val intChannel1 = parquetReportHandler.initChannel<Int>("int_channel_1")
+                val intChannel2 = parquetReportHandler.initChannel<Int>("int_channel_2")
+                val intChannel3 = parquetReportHandler.initChannel<Int>("int_channel_3")
+                intChannel1.report(t1, 1)
+                intChannel2.report(t2, 2)
+                intChannel3.report(t3, 3)
+                intChannel2.report(t4, 4)
+                intChannel1.report(t5, 5)
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 2, null)
+                rowEquals(t3.toLocalDateTime(TimeZone.UTC), null, null, 3)
+                rowEquals(t4.toLocalDateTime(TimeZone.UTC), null, 4, null)
+                rowEquals(t5.toLocalDateTime(TimeZone.UTC), 5, null, null)
+            }
+        }
+
+        @Test
+        fun `parquet report handler shall write null to columns other than the reported channel for reports at the same timestamp`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val intChannel1 = parquetReportHandler.initChannel<Int>("int_channel_1")
+                val intChannel2 = parquetReportHandler.initChannel<Int>("int_channel_2")
+                val intChannel3 = parquetReportHandler.initChannel<Int>("int_channel_3")
+                intChannel1.report(t1, 1)
+                intChannel2.report(t1, 2)
+                intChannel3.report(t1, 3)
+                intChannel2.report(t1, 4)
+                intChannel1.report(t1, 5)
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 2, null)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, null, 3)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 4, null)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 5, null, null)
+            }
+        }
+
+        @Test
+        fun `parquet report handler permits initial reports before initializing all channels`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            val t3 = t2 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val intChannel1 = parquetReportHandler.initChannel<Int>("int_channel_1")
+                intChannel1.report(t1, 1)
+                val intChannel2 = parquetReportHandler.initChannel<Int>("int_channel_2")
+                intChannel2.report(t1, 2)
+                val intChannel3 = parquetReportHandler.initChannel<Int>("int_channel_3")
+                intChannel3.report(t1, 3)
+                intChannel2.report(t2, 4)
+                intChannel1.report(t3, 5)
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "int_channel_1", "int_channel_2", "int_channel_3") {
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), 1, null, null)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, 2, null)
+                rowEquals(t1.toLocalDateTime(TimeZone.UTC), null, null, 3)
+                rowEquals(t2.toLocalDateTime(TimeZone.UTC), null, 4, null)
+                rowEquals(t3.toLocalDateTime(TimeZone.UTC), 5, null, null)
+            }
+        }
+
+        @Test
+        fun `parquet report handler prohibits initializing a channel after non-initial reports`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            assertThrows<IllegalStateException> {
+                ParquetReportHandler(path).use { parquetReportHandler ->
+                    val intChannel = parquetReportHandler.initChannel<Int>("int_channel_1")
+                    // Issue two reports at different times, guaranteeing to the report handler that the second report is not an initial report.
+                    intChannel.report(t1, 1)
+                    intChannel.report(t2, 2)
+                    // Attempting to add a channel now would change the file schema, so cannot be supported.
+                    // The report handler should cleanly throw an IllegalStateException, instead of arbitrary undefined behavior.
+                    parquetReportHandler.initChannel<Int>("int_channel_2")
+                }
             }
         }
 
