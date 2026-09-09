@@ -4,6 +4,7 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
+import gov.nasa.jpl.parakeet.parquet.CombineReportsRule.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationStrategy
@@ -24,14 +25,20 @@ import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
 import org.apache.parquet.schema.Type
 import org.apache.parquet.schema.Types
 import java.nio.file.Path
+import kotlin.time.Instant
 
-fun Path.usingParquetReportHandler(serializersModule: SerializersModule = Json.serializersModule, block: (ParquetReportHandler) -> Unit) {
-    ParquetReportHandler(this, serializersModule).use(block)
+fun Path.usingParquetReportHandler(
+    serializersModule: SerializersModule = Json.serializersModule,
+    combineReportsRule: CombineReportsRule = DONT_COMBINE,
+    block: (ParquetReportHandler) -> Unit,
+) {
+    ParquetReportHandler(this, serializersModule, combineReportsRule).use(block)
 }
 
 class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,
+    private val combineReportsRule: CombineReportsRule = DONT_COMBINE,
 ) : ChannelizedReportHandler, AutoCloseable {
     private data class ChannelInfo(
         val index: Int,
@@ -42,16 +49,25 @@ class ParquetReportHandler(
     private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
     private val initialReports: MutableList<ChannelData<*>> = mutableListOf()
 
-    private var writer: ParquetWriter<ChannelData<*>>? = null
+    private var writer: ParquetWriter<Collection<ChannelData<*>>>? = null
 
     private val initialized: Boolean get() = writer != null
     private fun initialize() {
         // Lock in our schema and build our writer
         // In so doing, we automatically flip virtual property `initialized` to true
         writer = ChannelDataParquetWriterBuilder(path, serializersModule, channelInfo).build()
-        // Flush all initial reports
-        initialReports.forEach { writer!!.write(it) }
+        // Now that we have a writer, re-report all the initial reports to apply the combination policy to them.
+        initialReports.forEach { report(it) }
         initialReports.clear()
+    }
+
+    private var pendingTime: Instant = Instant.DISTANT_PAST
+    private val pendingRow: MutableMap<Name, ChannelData<*>> = mutableMapOf()
+    private fun flushPendingRow() {
+        if (pendingRow.isNotEmpty()) {
+            writer!!.write(pendingRow.values)
+            pendingRow.clear()
+        }
     }
 
     private var closed = false
@@ -96,7 +112,23 @@ class ParquetReportHandler(
             }
         }
 
-        writer!!.write(data)
+        when (combineReportsRule) {
+            DONT_COMBINE -> writer!!.write(listOf(data))
+            COMBINE_AND_KEEP_ALL -> {
+                if (data.time != pendingTime || data.channel in pendingRow) {
+                    flushPendingRow()
+                    pendingTime = data.time
+                }
+                pendingRow[data.channel] = data
+            }
+            COMBINE_AND_KEEP_LAST -> {
+                if (data.time != pendingTime) {
+                    flushPendingRow()
+                    pendingTime = data.time
+                }
+                pendingRow[data.channel] = data
+            }
+        }
     }
 
     @OptIn(ExperimentalSerializationApi::class)
@@ -160,7 +192,9 @@ class ParquetReportHandler(
         // In rare cases, we may only see reports at the initial time.
         // In these cases, we must initialize to flush those reports, before we close.
         if (!initialized) initialize()
-        // Having asserted that we're initialized, pass on the request to close to our writer.
+        // Having asserted that we're initialized, write any pending data we may have
+        flushPendingRow()
+        // Having written all pending data, pass on the request to close to our writer.
         writer!!.close()
         // Finally, mark ourselves as closed
         closed = true
@@ -170,14 +204,14 @@ class ParquetReportHandler(
         path: Path,
         private val serializersModule: SerializersModule,
         private val channelInfo: Map<Name, ChannelInfo>,
-    ) : ParquetWriter.Builder<ChannelData<*>, ChannelDataParquetWriterBuilder>(
+    ) : ParquetWriter.Builder<Collection<ChannelData<*>>, ChannelDataParquetWriterBuilder>(
         LocalOutputFile(path)
     ) {
         override fun self(): ChannelDataParquetWriterBuilder = this
 
         @Deprecated("Deprecated in Java")
-        override fun getWriteSupport(conf: Configuration?): WriteSupport<ChannelData<*>?> =
-            object : WriteSupport<ChannelData<*>?>() {
+        override fun getWriteSupport(conf: Configuration?): WriteSupport<Collection<ChannelData<*>>> =
+            object : WriteSupport<Collection<ChannelData<*>>>() {
                 private lateinit var recordConsumer: RecordConsumer
                 private lateinit var parquetEncoder: ParquetEncoder
 
@@ -209,22 +243,28 @@ class ParquetReportHandler(
                     this.parquetEncoder = ParquetEncoder(serializersModule, this.recordConsumer)
                 }
 
-                override fun write(record: ChannelData<*>?) {
+                override fun write(record: Collection<ChannelData<*>>) {
                     recordConsumer.apply {
                         startMessage()
 
                         startField("timestamp", 0)
+                        // Since this entire writer is a private object, we're safe to assume a nonempty collection here,
+                        // and we're safe to assume all elements of the list are at the same time.
+                        val time = record.first().time
                         // TODO: Do we need to handle overflows here?
-                        addLong(record!!.time.epochSeconds * 1_000_000_000L + record.time.nanosecondsOfSecond)
+                        addLong(time.epochSeconds * 1_000_000_000L + time.nanosecondsOfSecond)
                         endField("timestamp", 0)
 
-                        val (index, type, serializer) = channelInfo.getValue(record.channel)
-                        // Get the name from type to avoid re-computing channel.name.toString(), since string-building can be expensive.
-                        startField(type.name, index)
-                        // TYPE SAFETY: We're using the serializer for the channel's declared data type.
-                        @Suppress("UNCHECKED_CAST")
-                        (serializer as KSerializer<Any?>).serialize(parquetEncoder, record.data)
-                        endField(type.name, index)
+                        for ((channel, _, data) in record) {
+                            // TODO: For performance, this map lookup is a bit hot... I don't know how you'd get around it though.
+                            val (index, type, serializer) = channelInfo.getValue(channel)
+                            // Get the name from type to avoid re-computing channel.name.toString(), since string-building can be expensive.
+                            startField(type.name, index)
+                            // TYPE SAFETY: We're using the serializer for the channel's declared data type.
+                            @Suppress("UNCHECKED_CAST")
+                            (serializer as KSerializer<Any?>).serialize(parquetEncoder, data)
+                            endField(type.name, index)
+                        }
 
                         endMessage()
                     }
