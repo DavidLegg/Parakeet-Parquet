@@ -799,6 +799,9 @@ object ParquetReportHandlerTest {
                 rowEquals(t1 + 6.hours, ANYTHING, null, null, null, null, null, null, null, "end")
             }
         }
+
+        // TODO: Figure out why the activities channel has records with all values empty, rather than nulls
+        //   If we can fix that, change all the "ANYTHING" placeholders for nulls to make the test more explicit.
     }
 
     private val DataFrame<*>.shape: Pair<Int, Int> get() = rowsCount() to columnsCount()
