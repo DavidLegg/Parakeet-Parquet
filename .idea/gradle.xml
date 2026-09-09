@@ -20,6 +20,7 @@
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/util" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/util/build" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
                 </projects>
               </build>
@@ -42,6 +43,7 @@
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/util" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/util/build" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
           </set>
         </option>

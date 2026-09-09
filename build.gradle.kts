@@ -1,6 +1,6 @@
 plugins {
     kotlin("jvm") version "2.4.10"
-
+    kotlin("plugin.serialization") version "2.4.10"
     kotlin("plugin.dataframe") version "2.4.10"
 }
 
@@ -22,6 +22,12 @@ dependencies {
     implementation("org.apache.parquet:parquet-hadoop:1.17.0")
     implementation("org.apache.hadoop:hadoop-client-api:3.4.0")
     implementation("org.apache.hadoop:hadoop-client-runtime:3.4.0")
+
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:2.4.10")
 
     // Kotlin's DataFrame library is used to read Parquet files in tests, verifying what we wrote is correct.
     testImplementation("org.jetbrains.kotlinx:dataframe:1.0.0-rc01")
