@@ -5,6 +5,9 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelMetadata
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.Metadatum
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
+import gov.nasa.jpl.parakeet.foundation.reporting.Reporting.registered
+import gov.nasa.jpl.parakeet.foundation.resources.discrete.DiscreteResourceOperations.discreteResource
+import gov.nasa.jpl.parakeet.foundation.resources.discrete.DiscreteResourceOperations.set
 import gov.nasa.jpl.parakeet.foundation.tasks.InitScope.Companion.spawn
 import gov.nasa.jpl.parakeet.foundation.tasks.Reactions.every
 import gov.nasa.jpl.parakeet.foundation.tasks.ReportScope.Companion.report
@@ -733,6 +736,67 @@ object ParquetReportHandlerTest {
                 rowEquals(t1 + 12.hours, ANYTHING, "It's 12:00", null)
                 rowEquals(t1 + 18.hours, ANYTHING, "It's 18:00", null)
                 rowEquals(t1 + 23.hours + 59.minutes, ANYTHING, null, "The end (of today) is nigh!")
+            }
+        }
+
+        @Test
+        fun `simulator reports registered primitive resources as primitive columns`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                Simulator(parquetReportHandler, t1) {
+                    val i = discreteResource("i", 0).registered()
+                    val l = discreteResource("l", 0L).registered()
+                    val f = discreteResource("f", 0.0f).registered()
+                    val d = discreteResource("d", 0.0).registered()
+                    val b = discreteResource("b", false).registered()
+                    val s = discreteResource("s", "start").registered()
+
+                    spawn("Change i", task {
+                        delay(1.hours)
+                        i.set(1)
+                    })
+                    spawn("Change l", task {
+                        delay(2.hours)
+                        l.set(2L)
+                    })
+                    spawn("Change f", task {
+                        delay(3.hours)
+                        f.set(3.0f)
+                    })
+                    spawn("Change d", task {
+                        delay(4.hours)
+                        d.set(4.0)
+                    })
+                    spawn("Change b", task {
+                        delay(5.hours)
+                        b.set(true)
+                    })
+                    spawn("Change s", task {
+                        delay(6.hours)
+                        s.set("end")
+                    })
+                }.runUntil(t1 + 24.hours)
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "activities", "stdout", "stderr", "i", "l", "f", "d", "b", "s") {
+                rowEquals(t1, ANYTHING, null, null, 0, null, null, null, null, null)
+                rowEquals(t1, ANYTHING, null, null, null, 0L, null, null, null, null)
+                rowEquals(t1, ANYTHING, null, null, null, null, 0.0f, null, null, null)
+                rowEquals(t1, ANYTHING, null, null, null, null, null, 0.0, null, null)
+                rowEquals(t1, ANYTHING, null, null, null, null, null, null, false, null)
+                rowEquals(t1, ANYTHING, null, null, null, null, null, null, null, "start")
+
+                rowEquals(t1 + 1.hours, ANYTHING, null, null, 1, null, null, null, null, null)
+                rowEquals(t1 + 2.hours, ANYTHING, null, null, null, 2L, null, null, null, null)
+                rowEquals(t1 + 3.hours, ANYTHING, null, null, null, null, 3.0f, null, null, null)
+                rowEquals(t1 + 4.hours, ANYTHING, null, null, null, null, null, 4.0, null, null)
+                rowEquals(t1 + 5.hours, ANYTHING, null, null, null, null, null, null, true, null)
+                rowEquals(t1 + 6.hours, ANYTHING, null, null, null, null, null, null, null, "end")
             }
         }
     }
