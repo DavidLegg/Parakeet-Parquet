@@ -166,8 +166,8 @@ class ParquetReportHandler(
         @Deprecated("Deprecated in Java")
         override fun getWriteSupport(conf: Configuration?): WriteSupport<ChannelData<*>?> =
             object : WriteSupport<ChannelData<*>?>() {
-                private var recordConsumer: RecordConsumer? = null
-                private var parquetEncoder: ParquetEncoder? = null
+                private lateinit var recordConsumer: RecordConsumer
+                private lateinit var parquetEncoder: ParquetEncoder
 
                 @Deprecated("Deprecated in Java")
                 override fun init(configuration: Configuration?): WriteContext = WriteContext(
@@ -185,13 +185,13 @@ class ParquetReportHandler(
                     mapOf(),
                 )
 
-                override fun prepareForWrite(recordConsumer: RecordConsumer?) {
+                override fun prepareForWrite(recordConsumer: RecordConsumer) {
                     this.recordConsumer = recordConsumer
-                    this.parquetEncoder = ParquetEncoder(serializersModule, recordConsumer!!)
+                    this.parquetEncoder = ParquetEncoder(serializersModule, this.recordConsumer)
                 }
 
                 override fun write(record: ChannelData<*>?) {
-                    recordConsumer!!.apply {
+                    recordConsumer.apply {
                         startMessage()
 
                         startField("timestamp", 0)
@@ -204,7 +204,7 @@ class ParquetReportHandler(
                         startField(type.name, index)
                         // TYPE SAFETY: We're using the serializer for the channel's declared data type.
                         @Suppress("UNCHECKED_CAST")
-                        (serializer as KSerializer<Any?>).serialize(parquetEncoder!!, record.data)
+                        (serializer as KSerializer<Any?>).serialize(parquetEncoder, record.data)
                         endField(type.name, index)
 
                         endMessage()
