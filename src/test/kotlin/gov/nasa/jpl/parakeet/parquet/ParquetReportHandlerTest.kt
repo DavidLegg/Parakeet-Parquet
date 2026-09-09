@@ -464,7 +464,7 @@ object ParquetReportHandlerTest {
         data class EmptyRecordType(val s: String? = null)
 
         @Test
-        fun `parquet report handler supports empty records`() {
+        fun `parquet report handler supports records with null values`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -509,7 +509,7 @@ object ParquetReportHandlerTest {
         }
 
         @Test
-        fun `parquet report handler supports empty list reports`() {
+        fun `parquet report handler supports empty lists`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")
             val path = directory / "test.parquet"
             assert(!path.exists())
@@ -520,6 +520,30 @@ object ParquetReportHandlerTest {
                 val listChannel = parquetReportHandler.initChannel<List<Int>>("list_channel")
                 listChannel.report(t1, listOf())
                 listChannel.report(t2, listOf())
+            }
+
+            assert(path.exists())
+            // At the time of writing (2026-08-20), the latest version of Kotlin DataFrame (1.0.0-rc01)
+            // does not support reading parquet files with lists containing more than one element.
+            // Since writing only singleton lists isn't much of a test, we'll skip the DataFrame read test for now.
+        }
+
+        @Test
+        fun `parquet report handler supports lists with null values`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            val t3 = t2 + 1.days
+            val t4 = t3 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val listChannel = parquetReportHandler.initChannel<List<Int?>>("list_channel")
+                listChannel.report(t1, listOf(1, null, 2))
+                listChannel.report(t2, listOf(null, 3))
+                listChannel.report(t3, listOf(4, null))
+                listChannel.report(t4, listOf(null, 5, null))
             }
 
             assert(path.exists())
@@ -591,7 +615,43 @@ object ParquetReportHandlerTest {
             }
         }
 
-        // TODO: Test null values in lists and maps
+        @Test
+        fun `parquet report handler supports maps with null values`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            val t2 = t1 + 1.days
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val mapChannel = parquetReportHandler.initChannel<Map<String, Int?>>("map_channel")
+                mapChannel.report(t1, mapOf("a" to null))
+                mapChannel.report(t2, mapOf("a" to 2, "b" to null))
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "map_channel") {
+                row {
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataFrame<*>>(it)
+                        checkDataFrame(it, "key", "value") {
+                            rowEquals("a", null)
+                        }
+                    }
+                }
+                row {
+                    assertEquals(t2.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataFrame<*>>(it)
+                        checkDataFrame(it, "key", "value") {
+                            rowEquals("a", 2)
+                            rowEquals("b", null)
+                        }
+                    }
+                }
+            }
+        }
 
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,
