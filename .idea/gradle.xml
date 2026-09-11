@@ -20,6 +20,9 @@
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/06_reactions" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling/01_clocks" />
+                  <project path="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling/02_concurrency_and_faults" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/util" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/util/build" />
                   <project path="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
@@ -45,6 +48,9 @@
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/06_reactions" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/07_plans_and_activities" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/01_intro_to_modeling/08_spawn" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling/01_clocks" />
+            <option value="$PROJECT_DIR$/../Parakeet/tutorials/03_advanced_modeling/02_concurrency_and_faults" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/util" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/util/build" />
             <option value="$PROJECT_DIR$/../Parakeet/tutorials/util/src" />
