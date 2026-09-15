@@ -35,6 +35,13 @@ fun Path.usingParquetReportHandler(
     ParquetReportHandler(this, serializersModule, combineReportsRule).use(block)
 }
 
+/**
+ * Writes channelized reports from a simulator directly to a parquet file.
+ *
+ * @param path The path to the parquet file to write to.
+ * @param serializersModule The serializers module used to decompose objects into parquet-compatible structures and primitives.
+ * @param combineReportsRule Whether and how to combine multiple reports at the same time on the same channel.
+ */
 class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,
