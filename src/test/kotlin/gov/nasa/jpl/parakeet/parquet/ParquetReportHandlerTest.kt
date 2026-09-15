@@ -492,13 +492,8 @@ object ParquetReportHandlerTest {
             }
         }
 
-        // TODO: Debug this test.
-        //   I think we should log every call to RecordConsumer to see exactly what we're encoding
-        // Debug notes:
-        // Looks like this is a bug/unsupported feature in the Kotlin DataFrame or Arrow libraries...
-        // When I load the data in Pandas, I see nulls where I expect them, but when I load the DataFrame,
-        // I get these weird sometimes-initialized, sometimes-default-valued records.
-        // I filed a bug report with the DataFrame library here: https://github.com/Kotlin/dataframe/issues/2041
+        // TODO: There's a bug in the DataFrame library causing this test to fail.
+        //   That bug was fixed, but we're waiting on a release.
         @Test
         fun `parquet report handler supports multiple record channels`() {
             val directory = createTempDirectory("ParquetReportHandlerTest_")

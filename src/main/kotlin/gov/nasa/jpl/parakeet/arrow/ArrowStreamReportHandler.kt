@@ -15,6 +15,7 @@ import kotlinx.serialization.descriptors.elementDescriptors
 import kotlinx.serialization.descriptors.elementNames
 import kotlinx.serialization.encoding.CompositeEncoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.serializer
 import org.apache.arrow.memory.BufferAllocator
@@ -32,16 +33,24 @@ import org.apache.arrow.vector.VarCharVector
 import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.FloatingPointPrecision
+import org.apache.arrow.vector.types.TimeUnit
 import org.apache.arrow.vector.types.pojo.ArrowType
 import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.FieldType
+import java.io.OutputStream
+
+fun <R> OutputStream.usingArrowStreamReportHandler(
+    serializersModule: SerializersModule = Json.serializersModule,
+    allocator: BufferAllocator = RootAllocator(),
+    block: (ArrowStreamReportHandler) -> R,
+) = ArrowStreamReportHandler(this, serializersModule, allocator).use(block)
 
 /**
  * Writes channelized reports from a simulator directly to an Apache Arrow IPC stream.
  */
 class ArrowStreamReportHandler(
-    writerConstructor: (VectorSchemaRoot) -> ArrowStreamWriter,
-    private val serializersModule: SerializersModule,
+    private val outputStream: OutputStream,
+    private val serializersModule: SerializersModule = SerializersModule {},
     private val allocator: BufferAllocator = RootAllocator()
 ) : ChannelizedReportHandler, AutoCloseable {
     private data class ChannelInfo(
@@ -50,24 +59,25 @@ class ArrowStreamReportHandler(
         val vector: FieldVector,
         val encoder: ArrowEncoder
     )
-    private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
-
     private val rootAllocator: BufferAllocator = RootAllocator()
     private var vectorSchemaRoot: VectorSchemaRoot? = null
-    private var writerConstructor: ((VectorSchemaRoot) -> ArrowStreamWriter)? = writerConstructor
     private var writer: ArrowStreamWriter? = null
+
+    private val timestampField = Field("timestamp", FieldType(false, ArrowType.Timestamp(TimeUnit.NANOSECOND, "UTC"), null, null), null)
+    private val timestampVector = timestampField.createVector(rootAllocator)
+    private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
 
     private var rowIndex = 0
 
     private val initialized get() = writer != null
     private fun initialize() {
-        vectorSchemaRoot = VectorSchemaRoot(channelInfo.values.map { it.vector })
-        writer = writerConstructor!!(vectorSchemaRoot!!)
-        // Let go of our reference to the constructor now that we've used it, to free memory it may reference
-        writerConstructor = null
+        vectorSchemaRoot = VectorSchemaRoot(listOf(timestampVector) + channelInfo.values.map { it.vector })
+        writer = ArrowStreamWriter(vectorSchemaRoot, null, outputStream)
     }
     private var closed = false
     override fun close() {
+        if (!initialized) initialize()
+
         // Close things in the opposite order of how we opened them
         // TODO: Should we wrap any of this in try/catch/finally?
         writer?.close()
@@ -99,7 +109,7 @@ class ArrowStreamReportHandler(
             serializer,
             field,
             vector,
-            ArrowEncoder(vector)
+            ArrowEncoder(vector, serializersModule)
         )
     }
 
