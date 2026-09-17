@@ -1,6 +1,7 @@
 package gov.nasa.jpl.parakeet.arrow
 
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport
+import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -27,10 +28,15 @@ import org.apache.arrow.vector.Float4Vector
 import org.apache.arrow.vector.Float8Vector
 import org.apache.arrow.vector.IntVector
 import org.apache.arrow.vector.SmallIntVector
+import org.apache.arrow.vector.TimeStampNanoVector
 import org.apache.arrow.vector.TinyIntVector
 import org.apache.arrow.vector.UInt2Vector
 import org.apache.arrow.vector.VarCharVector
 import org.apache.arrow.vector.VectorSchemaRoot
+import org.apache.arrow.vector.complex.ListVector
+import org.apache.arrow.vector.complex.StructVector
+import org.apache.arrow.vector.complex.writer.BaseWriter
+import org.apache.arrow.vector.complex.writer.BitWriter
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.TimeUnit
@@ -51,7 +57,9 @@ fun <R> OutputStream.usingArrowStreamReportHandler(
 class ArrowStreamReportHandler(
     private val outputStream: OutputStream,
     private val serializersModule: SerializersModule = SerializersModule {},
-    private val allocator: BufferAllocator = RootAllocator()
+    private val allocator: BufferAllocator = RootAllocator(),
+    // TODO: Find a smarter way to decide on batch size, e.g. a fixed amount of memory
+    private val maxRowsPerBatch: Int = 1024,
 ) : ChannelizedReportHandler, AutoCloseable {
     private data class ChannelInfo(
         val serializer: KSerializer<*>,
@@ -59,30 +67,63 @@ class ArrowStreamReportHandler(
         val vector: FieldVector,
         val encoder: ArrowEncoder
     )
-    private val rootAllocator: BufferAllocator = RootAllocator()
+    private val timestampField = Field("timestamp", FieldType(false, ArrowType.Timestamp(TimeUnit.NANOSECOND, null), null, null), null)
+    private val timestampVector = (timestampField.createVector(allocator) as TimeStampNanoVector).apply {
+        setInitialCapacity(maxRowsPerBatch)
+        allocateNew()
+    }
+    private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
+
     private var vectorSchemaRoot: VectorSchemaRoot? = null
     private var writer: ArrowStreamWriter? = null
 
-    private val timestampField = Field("timestamp", FieldType(false, ArrowType.Timestamp(TimeUnit.NANOSECOND, "UTC"), null, null), null)
-    private val timestampVector = timestampField.createVector(rootAllocator)
-    private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
-
+    private val initialReports: MutableList<ChannelData<*>> = mutableListOf()
     private var rowIndex = 0
 
     private val initialized get() = writer != null
     private fun initialize() {
+        println("DEBUG: Initializing")
         vectorSchemaRoot = VectorSchemaRoot(listOf(timestampVector) + channelInfo.values.map { it.vector })
         writer = ArrowStreamWriter(vectorSchemaRoot, null, outputStream)
+        println("DEBUG: Starting writer")
+        writer!!.start()
+        // Now that we have a writer, re-report all the initial reports to apply the combination policy to them.
+        initialReports.forEach { report(it) }
+        initialReports.clear()
     }
+
+    private fun flushBatch() {
+        println("DEBUG: Flushing batch")
+        // Mark all vectors as complete by setting valueCount on them
+//        println("DEBUG: Finalizing vectors")
+//        channelInfo.values.forEach { it.vector.valueCount = rowIndex }
+        println("DEBUG: Finalizing VSR")
+        vectorSchemaRoot!!.setRowCount(rowIndex)
+        // Ask the writer to write all vectors to the output stream
+        println("DEBUG: Writing batch")
+        writer!!.writeBatch()
+        // Finally, reset all vectors for the next batch
+        println("DEBUG: Resetting vectors")
+        channelInfo.values.forEach { it.vector.reset() }
+        rowIndex = 0
+    }
+
     private var closed = false
     override fun close() {
+        println("DEBUG: Closing")
         if (!initialized) initialize()
+        println("DEBUG: Close: rowIndex = $rowIndex")
+        if (rowIndex > 0) flushBatch()
 
         // Close things in the opposite order of how we opened them
         // TODO: Should we wrap any of this in try/catch/finally?
-        writer?.close()
-        vectorSchemaRoot?.close()
+        println("DEBUG: Closing writer")
+        writer!!.close()
+        println("DEBUG: Closing VSR")
+        vectorSchemaRoot!!.close()
+        println("DEBUG: Closing vectors")
         channelInfo.values.forEach { it.vector.close() }
+        println("DEBUG: Closed")
         closed = true
     }
 
@@ -103,8 +144,13 @@ class ArrowStreamReportHandler(
         }
 
         val nameString = name.toString()
-        val field = serializer.descriptor.toArrowField(nameString)
+        val field = serializer.descriptor.toArrowField(nameString, topLevel = true)
+        println("DEBUG: Creating vector for $nameString")
         val vector = field.createVector(allocator)
+        println("DEBUG: Setting capacity for $nameString vector to $maxRowsPerBatch")
+        vector.setInitialCapacity(maxRowsPerBatch)
+        println("DEBUG: Allocating vector for $nameString")
+        vector.allocateNew()
         channelInfo[name] = ChannelInfo(
             serializer,
             field,
@@ -172,19 +218,42 @@ class ArrowStreamReportHandler(
         }
     }
 
-    override fun <T> report(data: ChannelReport.ChannelData<T>) {
+    override fun <T> report(data: ChannelData<T>) {
+        check(!closed) {
+            "Attempting to use a closed ${this::class.simpleName}"
+        }
+        if (!initialized) {
+            if (initialReports.isEmpty() || initialReports.first().time == data.time) {
+                // This is (potentially) an initial report, so buffer it until time progresses
+                initialReports.add(data)
+                return
+            } else {
+                // This is the first certainly-not-initial report, so all channels are now initialized
+                // Initialize the writer and flush the initial reports
+                initialize()
+                // Then fall through to the general case
+            }
+        }
+
+        // TODO: Support combining rows
         val channelInfo = channelInfo.getValue(data.channel)
+        println("DEBUG: Writing row $rowIndex timestamp ${data.time}")
+        timestampVector.setSafe(rowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
+        println("DEBUG: Writing row $rowIndex channel ${data.channel} value ${data.data}")
         @Suppress("UNCHECKED_CAST")
         (channelInfo.serializer as KSerializer<Any?>).serialize(channelInfo.encoder, data.data)
+        rowIndex++
+        if (rowIndex >= maxRowsPerBatch) flushBatch()
     }
 
-    private inner class ArrowEncoder(
+    // TODO: I think the encoder needs to be re-implemented using writers...
+    //   Peeking at the way the UnionListWriter works, it looks hard to replicate correctly.
+
+    private class ArrowEncoder(
         private val vector: FieldVector,
         override val serializersModule: SerializersModule,
     ) : Encoder {
-        // TODO: Think this through better... This probably isn't quite right for lists and maps...
-        private val children: List<ArrowEncoder>? =
-            vector.childrenFromFields?.takeIf { it.isNotEmpty() }?.map { ArrowEncoder(it, serializersModule) }
+        var rowIndex = 0
 
         @ExperimentalSerializationApi
         override fun encodeNull() {
@@ -237,16 +306,85 @@ class ArrowStreamReportHandler(
         }
 
         override fun beginStructure(descriptor: SerialDescriptor): CompositeEncoder {
-            checkNotNull(children)
+            return when (descriptor.kind as StructureKind) {
+                StructureKind.CLASS -> createClassEncoder(descriptor)
+                StructureKind.LIST -> TODO()
+                StructureKind.MAP -> TODO()
+                StructureKind.OBJECT -> TODO()
+            }
+        }
 
-            // TODO: I suspect this isn't quite right because Kotlin's SerialDescriptor doesn't have the same hierarchy as Arrow's Schema
-
+        @OptIn(ExperimentalSerializationApi::class)
+        private fun createClassEncoder(descriptor: SerialDescriptor): CompositeEncoder {
+            vector as StructVector
             return object : CompositeEncoder {
-                override val serializersModule: SerializersModule =
-                    this@ArrowEncoder.serializersModule
+                override val serializersModule: SerializersModule = this@ArrowEncoder.serializersModule
+                private val children = vector.childrenFromFields.map { ArrowEncoder(it, serializersModule) }
 
                 override fun endStructure(descriptor: SerialDescriptor) {
-                    // Nothing to do
+                    vector.setIndexDefined(rowIndex)
+                }
+
+                override fun encodeBooleanElement(descriptor: SerialDescriptor, index: Int, value: Boolean) {
+                    children[index].encodeBoolean(value)
+                }
+
+                override fun encodeByteElement(descriptor: SerialDescriptor, index: Int, value: Byte) {
+                    children[index].encodeByte(value)
+                }
+
+                override fun encodeCharElement(descriptor: SerialDescriptor, index: Int, value: Char) {
+                    children[index].encodeChar(value)
+                }
+
+                override fun encodeDoubleElement(descriptor: SerialDescriptor, index: Int, value: Double) {
+                    children[index].encodeDouble(value)
+                }
+
+                override fun encodeFloatElement(descriptor: SerialDescriptor, index: Int, value: Float) {
+                    children[index].encodeFloat(value)
+                }
+
+                override fun encodeInlineElement(descriptor: SerialDescriptor, index: Int): Encoder {
+                    return children[index]
+                }
+
+                override fun encodeIntElement(descriptor: SerialDescriptor, index: Int, value: Int) {
+                    children[index].encodeInt(value)
+                }
+
+                override fun encodeLongElement(descriptor: SerialDescriptor, index: Int, value: Long) {
+                    children[index].encodeLong(value)
+                }
+
+                override fun encodeShortElement(descriptor: SerialDescriptor, index: Int, value: Short) {
+                    children[index].encodeShort(value)
+                }
+
+                override fun encodeStringElement(descriptor: SerialDescriptor, index: Int, value: String) {
+                    children[index].encodeString(value)
+                }
+
+                override fun <T> encodeSerializableElement(descriptor: SerialDescriptor, index: Int, serializer: SerializationStrategy<T>, value: T) {
+                    children[index].encodeSerializableValue(serializer, value)
+                }
+
+                override fun <T : Any> encodeNullableSerializableElement(descriptor: SerialDescriptor, index: Int, serializer: SerializationStrategy<T>, value: T?) {
+                    if (value == null) {
+                        children[index].encodeNull()
+                    } else {
+                        children[index].encodeSerializableValue(serializer, value)
+                    }
+                }
+            }
+        }
+
+        private fun createListEncoder(descriptor: SerialDescriptor): CompositeEncoder {
+            return object : CompositeEncoder {
+                override val serializersModule: SerializersModule = this@ArrowEncoder.serializersModule
+
+                override fun endStructure(descriptor: SerialDescriptor) {
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeBooleanElement(
@@ -254,7 +392,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Boolean
                 ) {
-                    children[index].encodeBoolean(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeByteElement(
@@ -262,7 +400,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Byte
                 ) {
-                    children[index].encodeByte(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeShortElement(
@@ -270,7 +408,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Short
                 ) {
-                    children[index].encodeShort(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeCharElement(
@@ -278,7 +416,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Char
                 ) {
-                    children[index].encodeChar(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeIntElement(
@@ -286,7 +424,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Int
                 ) {
-                    children[index].encodeInt(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeLongElement(
@@ -294,7 +432,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Long
                 ) {
-                    children[index].encodeLong(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeFloatElement(
@@ -302,7 +440,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Float
                 ) {
-                    children[index].encodeFloat(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeDoubleElement(
@@ -310,7 +448,7 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: Double
                 ) {
-                    children[index].encodeDouble(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeStringElement(
@@ -318,14 +456,14 @@ class ArrowStreamReportHandler(
                     index: Int,
                     value: String
                 ) {
-                    children[index].encodeString(value)
+                    TODO("Not yet implemented")
                 }
 
                 override fun encodeInlineElement(
                     descriptor: SerialDescriptor,
                     index: Int
                 ): Encoder {
-                    return children[index]
+                    TODO("Not yet implemented")
                 }
 
                 override fun <T> encodeSerializableElement(
@@ -334,7 +472,7 @@ class ArrowStreamReportHandler(
                     serializer: SerializationStrategy<T>,
                     value: T
                 ) {
-                    children[index].encodeSerializableValue(serializer, value)
+                    TODO("Not yet implemented")
                 }
 
                 @ExperimentalSerializationApi
@@ -344,11 +482,7 @@ class ArrowStreamReportHandler(
                     serializer: SerializationStrategy<T>,
                     value: T?
                 ) {
-                    if (value == null) {
-                        children[index].encodeNull()
-                    } else {
-                        children[index].encodeSerializableValue(serializer, value)
-                    }
+                    TODO("Not yet implemented")
                 }
             }
         }

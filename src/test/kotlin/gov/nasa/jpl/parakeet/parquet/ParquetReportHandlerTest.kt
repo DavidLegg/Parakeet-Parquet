@@ -1,5 +1,6 @@
 package gov.nasa.jpl.parakeet.parquet
 
+import gov.nasa.jpl.parakeet.TestUtils
 import gov.nasa.jpl.parakeet.foundation.Simulator
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.*
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
@@ -15,12 +16,12 @@ import gov.nasa.jpl.parakeet.foundation.tasks.SimulationScope.Companion.stdout
 import gov.nasa.jpl.parakeet.foundation.tasks.TaskOperations.delay
 import gov.nasa.jpl.parakeet.foundation.tasks.task
 import gov.nasa.jpl.parakeet.kernel.Name
-import gov.nasa.jpl.parakeet.parquet.TestUtils.ANYTHING
-import gov.nasa.jpl.parakeet.parquet.TestUtils.assertEquals
-import gov.nasa.jpl.parakeet.parquet.TestUtils.checkDataFrame
-import gov.nasa.jpl.parakeet.parquet.TestUtils.component6
-import gov.nasa.jpl.parakeet.parquet.TestUtils.component7
-import gov.nasa.jpl.parakeet.parquet.TestUtils.rowEquals
+import gov.nasa.jpl.parakeet.TestUtils.ANYTHING
+import gov.nasa.jpl.parakeet.TestUtils.assertEquals
+import gov.nasa.jpl.parakeet.TestUtils.checkDataFrame
+import gov.nasa.jpl.parakeet.TestUtils.component6
+import gov.nasa.jpl.parakeet.TestUtils.component7
+import gov.nasa.jpl.parakeet.TestUtils.rowEquals
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime

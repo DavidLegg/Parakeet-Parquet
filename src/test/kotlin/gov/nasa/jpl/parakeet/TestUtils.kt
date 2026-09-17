@@ -1,4 +1,4 @@
-package gov.nasa.jpl.parakeet.parquet
+package gov.nasa.jpl.parakeet
 
 import org.jetbrains.kotlinx.dataframe.DataFrame
 import org.junit.jupiter.api.Assertions.assertEquals
