@@ -35,6 +35,7 @@ import kotlin.reflect.typeOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 import kotlin.use
@@ -529,8 +530,6 @@ object ArrowStreamReportHandlerTest {
             }
         }
 
-        // TODO: There's a bug in the DataFrame library causing this test to fail.
-        //   That bug was fixed, but we're waiting on a release.
         @Test
         fun `arrow report handler supports multiple record channels`() {
             val directory = createTempDirectory("ArrowStreamReportHandlerTest_")
@@ -548,6 +547,8 @@ object ArrowStreamReportHandlerTest {
                 }
             }
 
+            // The dataframe library reads the "null" structs by pushing that null into the leaf fields.
+            // The underlying Arrow file (probably) did the right thing and wrote a null struct, though.
             val df = DataFrame.readArrowIPC(path)
             checkDataFrame(df, "timestamp", "record_channel_1", "record_channel_2") {
                 row {
@@ -561,11 +562,27 @@ object ArrowStreamReportHandlerTest {
                         assertEquals(false, it["b"])
                         assertEquals("test_1", it["s"])
                     }
-                    assertEquals(null)
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertNull(it["i"])
+                        assertNull(it["l"])
+                        assertNull(it["f"])
+                        assertNull(it["d"])
+                        assertNull(it["b"])
+                        assertNull(it["s"])
+                    }
                 }
                 row {
                     assertEquals(t2.toLocalDateTime(TimeZone.UTC))
-                    assertEquals(null)
+                    check {
+                        assertIs<DataRow<*>>(it)
+                        assertNull(it["i"])
+                        assertNull(it["l"])
+                        assertNull(it["f"])
+                        assertNull(it["d"])
+                        assertNull(it["b"])
+                        assertNull(it["s"])
+                    }
                     check {
                         assertIs<DataRow<*>>(it)
                         assertEquals(10, it["i"])
@@ -760,6 +777,8 @@ object ArrowStreamReportHandlerTest {
                 }
             }
         }
+
+        // TODO: Test more complex nested structures
 
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,

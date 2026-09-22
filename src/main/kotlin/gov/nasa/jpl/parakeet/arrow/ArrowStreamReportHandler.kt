@@ -36,7 +36,16 @@ import org.apache.arrow.vector.VectorSchemaRoot
 import org.apache.arrow.vector.complex.ListVector
 import org.apache.arrow.vector.complex.StructVector
 import org.apache.arrow.vector.complex.writer.BaseWriter
+import org.apache.arrow.vector.complex.writer.BigIntWriter
 import org.apache.arrow.vector.complex.writer.BitWriter
+import org.apache.arrow.vector.complex.writer.FieldWriter
+import org.apache.arrow.vector.complex.writer.Float4Writer
+import org.apache.arrow.vector.complex.writer.Float8Writer
+import org.apache.arrow.vector.complex.writer.IntWriter
+import org.apache.arrow.vector.complex.writer.SmallIntWriter
+import org.apache.arrow.vector.complex.writer.TinyIntWriter
+import org.apache.arrow.vector.complex.writer.UInt2Writer
+import org.apache.arrow.vector.complex.writer.VarCharWriter
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.TimeUnit
@@ -95,8 +104,8 @@ class ArrowStreamReportHandler(
     private fun flushBatch() {
         println("DEBUG: Flushing batch")
         // Mark all vectors as complete by setting valueCount on them
-//        println("DEBUG: Finalizing vectors")
-//        channelInfo.values.forEach { it.vector.valueCount = rowIndex }
+        println("DEBUG: Finalizing vectors")
+        channelInfo.values.forEach { it.vector.valueCount = rowIndex }
         println("DEBUG: Finalizing VSR")
         vectorSchemaRoot!!.setRowCount(rowIndex)
         // Ask the writer to write all vectors to the output stream
@@ -155,7 +164,7 @@ class ArrowStreamReportHandler(
             serializer,
             field,
             vector,
-            ArrowEncoder(vector, serializersModule)
+            ArrowEncoder(vector.minorType.getNewFieldWriter(vector), serializersModule),
         )
     }
 
@@ -240,251 +249,10 @@ class ArrowStreamReportHandler(
         println("DEBUG: Writing row $rowIndex timestamp ${data.time}")
         timestampVector.setSafe(rowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
         println("DEBUG: Writing row $rowIndex channel ${data.channel} value ${data.data}")
+        channelInfo.encoder.position = rowIndex
         @Suppress("UNCHECKED_CAST")
         (channelInfo.serializer as KSerializer<Any?>).serialize(channelInfo.encoder, data.data)
         rowIndex++
         if (rowIndex >= maxRowsPerBatch) flushBatch()
-    }
-
-    // TODO: I think the encoder needs to be re-implemented using writers...
-    //   Peeking at the way the UnionListWriter works, it looks hard to replicate correctly.
-
-    private class ArrowEncoder(
-        private val vector: FieldVector,
-        override val serializersModule: SerializersModule,
-    ) : Encoder {
-        var rowIndex = 0
-
-        @ExperimentalSerializationApi
-        override fun encodeNull() {
-            vector.setNull(rowIndex)
-        }
-
-        override fun encodeBoolean(value: Boolean) {
-            (vector as BitVector).setSafe(rowIndex, if (value) 1 else 0)
-        }
-
-        override fun encodeByte(value: Byte) {
-            (vector as TinyIntVector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeShort(value: Short) {
-            (vector as SmallIntVector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeChar(value: Char) {
-            (vector as UInt2Vector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeInt(value: Int) {
-            (vector as IntVector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeLong(value: Long) {
-            (vector as BigIntVector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeFloat(value: Float) {
-            (vector as Float4Vector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeDouble(value: Double) {
-            (vector as Float8Vector).setSafe(rowIndex, value)
-        }
-
-        override fun encodeString(value: String) {
-            (vector as VarCharVector).setSafe(rowIndex, value.encodeToByteArray())
-        }
-
-        override fun encodeEnum(enumDescriptor: SerialDescriptor, index: Int) {
-            // TODO: Update this once we use a dictionary encoding for enums
-            encodeString(enumDescriptor.getElementName(index))
-        }
-
-        override fun encodeInline(descriptor: SerialDescriptor): Encoder {
-            return this
-        }
-
-        override fun beginStructure(descriptor: SerialDescriptor): CompositeEncoder {
-            return when (descriptor.kind as StructureKind) {
-                StructureKind.CLASS -> createClassEncoder(descriptor)
-                StructureKind.LIST -> TODO()
-                StructureKind.MAP -> TODO()
-                StructureKind.OBJECT -> TODO()
-            }
-        }
-
-        @OptIn(ExperimentalSerializationApi::class)
-        private fun createClassEncoder(descriptor: SerialDescriptor): CompositeEncoder {
-            vector as StructVector
-            return object : CompositeEncoder {
-                override val serializersModule: SerializersModule = this@ArrowEncoder.serializersModule
-                private val children = vector.childrenFromFields.map { ArrowEncoder(it, serializersModule) }
-
-                override fun endStructure(descriptor: SerialDescriptor) {
-                    vector.setIndexDefined(rowIndex)
-                }
-
-                override fun encodeBooleanElement(descriptor: SerialDescriptor, index: Int, value: Boolean) {
-                    children[index].encodeBoolean(value)
-                }
-
-                override fun encodeByteElement(descriptor: SerialDescriptor, index: Int, value: Byte) {
-                    children[index].encodeByte(value)
-                }
-
-                override fun encodeCharElement(descriptor: SerialDescriptor, index: Int, value: Char) {
-                    children[index].encodeChar(value)
-                }
-
-                override fun encodeDoubleElement(descriptor: SerialDescriptor, index: Int, value: Double) {
-                    children[index].encodeDouble(value)
-                }
-
-                override fun encodeFloatElement(descriptor: SerialDescriptor, index: Int, value: Float) {
-                    children[index].encodeFloat(value)
-                }
-
-                override fun encodeInlineElement(descriptor: SerialDescriptor, index: Int): Encoder {
-                    return children[index]
-                }
-
-                override fun encodeIntElement(descriptor: SerialDescriptor, index: Int, value: Int) {
-                    children[index].encodeInt(value)
-                }
-
-                override fun encodeLongElement(descriptor: SerialDescriptor, index: Int, value: Long) {
-                    children[index].encodeLong(value)
-                }
-
-                override fun encodeShortElement(descriptor: SerialDescriptor, index: Int, value: Short) {
-                    children[index].encodeShort(value)
-                }
-
-                override fun encodeStringElement(descriptor: SerialDescriptor, index: Int, value: String) {
-                    children[index].encodeString(value)
-                }
-
-                override fun <T> encodeSerializableElement(descriptor: SerialDescriptor, index: Int, serializer: SerializationStrategy<T>, value: T) {
-                    children[index].encodeSerializableValue(serializer, value)
-                }
-
-                override fun <T : Any> encodeNullableSerializableElement(descriptor: SerialDescriptor, index: Int, serializer: SerializationStrategy<T>, value: T?) {
-                    if (value == null) {
-                        children[index].encodeNull()
-                    } else {
-                        children[index].encodeSerializableValue(serializer, value)
-                    }
-                }
-            }
-        }
-
-        private fun createListEncoder(descriptor: SerialDescriptor): CompositeEncoder {
-            return object : CompositeEncoder {
-                override val serializersModule: SerializersModule = this@ArrowEncoder.serializersModule
-
-                override fun endStructure(descriptor: SerialDescriptor) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeBooleanElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Boolean
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeByteElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Byte
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeShortElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Short
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeCharElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Char
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeIntElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Int
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeLongElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Long
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeFloatElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Float
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeDoubleElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: Double
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeStringElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    value: String
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                override fun encodeInlineElement(
-                    descriptor: SerialDescriptor,
-                    index: Int
-                ): Encoder {
-                    TODO("Not yet implemented")
-                }
-
-                override fun <T> encodeSerializableElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    serializer: SerializationStrategy<T>,
-                    value: T
-                ) {
-                    TODO("Not yet implemented")
-                }
-
-                @ExperimentalSerializationApi
-                override fun <T : Any> encodeNullableSerializableElement(
-                    descriptor: SerialDescriptor,
-                    index: Int,
-                    serializer: SerializationStrategy<T>,
-                    value: T?
-                ) {
-                    TODO("Not yet implemented")
-                }
-            }
-        }
     }
 }
