@@ -1,7 +1,6 @@
 package gov.nasa.jpl.parakeet.arrow
 
 import gov.nasa.jpl.parakeet.arrow.ArrowEncoder.State.*
-import gov.nasa.jpl.parakeet.general.units.Field
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.descriptors.PrimitiveKind
@@ -19,11 +18,29 @@ import org.apache.arrow.vector.complex.writer.FieldWriter
 class ArrowEncoder private constructor(
     private var writer: FieldWriter,
     override val serializersModule: SerializersModule,
-    private var state: State,
+    state: State,
 ) : Encoder, CompositeEncoder {
     constructor(writer: FieldWriter, serializersModule: SerializersModule) : this(writer, serializersModule, TopLevel)
 
     var position by writer::position
+
+    private var state = state
+        set(value) {
+            debug { "S := $value (was $state)" }
+            field = value
+        }
+
+    private val stack = ArrayDeque<Pair<FieldWriter, State>>(4)
+    private fun save() {
+        debug { "Save (W, $state)" }
+        stack.addLast(writer to state)
+    }
+    private fun restore() {
+        val (w, s) = stack.removeLast()
+        debug { "Restore (W, $s)" }
+        writer = w
+        state = s
+    }
 
     private enum class State {
         TopLevel,
@@ -39,13 +56,25 @@ class ArrowEncoder private constructor(
 
     private var fieldToWrite: String? = null
 
+    private val debug = true
+    private fun debug(message: () -> String) {
+        if (debug) println("DEBUG: " + "".padStart(stack.size * 2) + message())
+    }
+
     @ExperimentalSerializationApi
     override fun encodeNull() {
+        debug { "encodeNull() - state: $state" }
         when (state) {
-            TopLevel -> writer.writeNull()
+            TopLevel -> {
+                debug { "W.writeNull()" }
+                writer.writeNull()
+            }
             WritingStructField -> { /* Nothing to do? */ }
             // TODO: We should probably be a little more careful about typing here...
-            WritingListElement -> writer.writeNull()
+            WritingListElement -> {
+                debug { "W.writeNull()" }
+                writer.writeNull()
+            }
             // Null keys are not permitted
             WritingMapValue -> { /* Nothing to do */ }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
@@ -54,185 +83,386 @@ class ArrowEncoder private constructor(
     }
 
     override fun encodeBoolean(value: Boolean) {
+        debug { "encodeBoolean($value) - state: $state" }
         val bit = if (value) 1 else 0
         when (state) {
-            TopLevel -> writer.writeBit(bit)
-            WritingStructField -> writer.bit(fieldToWrite).writeBit(bit)
-            WritingListElement -> writer.bit().writeBit(bit)
-            WritingMapKey -> writer.key().bit().writeBit(bit)
-            WritingMapValue -> writer.value().bit().writeBit(bit)
+            TopLevel -> {
+                debug { "W.writeBit($bit)" }
+                writer.writeBit(bit)
+            }
+            WritingStructField -> {
+                debug { "W.bit($fieldToWrite).writeBit($bit)" }
+                writer.bit(fieldToWrite).writeBit(bit)
+            }
+            WritingListElement -> {
+                debug { "W.bit().writeBit($bit)" }
+                writer.bit().writeBit(bit)
+            }
+            WritingMapKey -> {
+                debug { "W.key().bit().writeBit($bit)" }
+                writer.key().bit().writeBit(bit)
+            }
+            WritingMapValue -> {
+                debug { "W.value().bit().writeBit($bit)" }
+                writer.value().bit().writeBit(bit)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeByte(value: Byte) {
+        debug { "encodeByte($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeTinyInt(value)
-            WritingStructField -> writer.tinyInt(fieldToWrite).writeTinyInt(value)
-            WritingListElement -> writer.tinyInt().writeTinyInt(value)
-            WritingMapKey -> writer.key().tinyInt().writeTinyInt(value)
-            WritingMapValue -> writer.value().tinyInt().writeTinyInt(value)
+            TopLevel -> {
+                debug { "W.writeTinyInt($value)" }
+                writer.writeTinyInt(value)
+            }
+            WritingStructField -> {
+                debug { "W.tinyInt($fieldToWrite).writeTinyInt($value)" }
+                writer.tinyInt(fieldToWrite).writeTinyInt(value)
+            }
+            WritingListElement -> {
+                debug { "W.tinyInt().writeTinyInt($value)" }
+                writer.tinyInt().writeTinyInt(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().tinyInt().writeTinyInt($value)" }
+                writer.key().tinyInt().writeTinyInt(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().tinyInt().writeTinyInt($value)" }
+                writer.value().tinyInt().writeTinyInt(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeShort(value: Short) {
+        debug { "encodeShort($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeSmallInt(value)
-            WritingStructField -> writer.smallInt(fieldToWrite).writeSmallInt(value)
-            WritingListElement -> writer.smallInt().writeSmallInt(value)
-            WritingMapKey -> writer.key().smallInt().writeSmallInt(value)
-            WritingMapValue -> writer.value().smallInt().writeSmallInt(value)
+            TopLevel -> {
+                debug { "W.writeSmallInt($value)" }
+                writer.writeSmallInt(value)
+            }
+            WritingStructField -> {
+                debug { "W.smallInt($fieldToWrite).writeSmallInt($value)" }
+                writer.smallInt(fieldToWrite).writeSmallInt(value)
+            }
+            WritingListElement -> {
+                debug { "W.smallInt().writeSmallInt($value)" }
+                writer.smallInt().writeSmallInt(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().smallInt().writeSmallInt($value)" }
+                writer.key().smallInt().writeSmallInt(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().smallInt().writeSmallInt($value)" }
+                writer.value().smallInt().writeSmallInt(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeChar(value: Char) {
+        debug { "encodeChar($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeUInt2(value)
-            WritingStructField -> writer.uInt2(fieldToWrite).writeUInt2(value)
-            WritingListElement -> writer.uInt2().writeUInt2(value)
-            WritingMapKey -> writer.key().uInt2().writeUInt2(value)
-            WritingMapValue -> writer.value().uInt2().writeUInt2(value)
+            TopLevel -> {
+                debug { "W.writeUInt2($value)" }
+                writer.writeUInt2(value)
+            }
+            WritingStructField -> {
+                debug { "W.uInt2($fieldToWrite).writeUInt2($value)" }
+                writer.uInt2(fieldToWrite).writeUInt2(value)
+            }
+            WritingListElement -> {
+                debug { "W.uInt2().writeUInt2($value)" }
+                writer.uInt2().writeUInt2(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().uInt2().writeUInt2($value)" }
+                writer.key().uInt2().writeUInt2(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().uInt2().writeUInt2($value)" }
+                writer.value().uInt2().writeUInt2(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeInt(value: Int) {
+        debug { "encodeInt($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeInt(value)
-            WritingStructField -> writer.integer(fieldToWrite).writeInt(value)
-            WritingListElement -> writer.integer().writeInt(value)
-            WritingMapKey -> writer.key().integer().writeInt(value)
-            WritingMapValue -> writer.value().integer().writeInt(value)
+            TopLevel -> {
+                debug { "W.writeInt($value)" }
+                writer.writeInt(value)
+            }
+            WritingStructField -> {
+                debug { "W.integer($fieldToWrite).writeInt($value)" }
+                writer.integer(fieldToWrite).writeInt(value)
+            }
+            WritingListElement -> {
+                debug { "W.integer().writeInt($value)" }
+                writer.integer().writeInt(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().integer().writeInt($value)" }
+                writer.key().integer().writeInt(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().integer().writeInt($value)" }
+                writer.value().integer().writeInt(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeLong(value: Long) {
+        debug { "encodeLong($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeBigInt(value)
-            WritingStructField -> writer.bigInt(fieldToWrite).writeBigInt(value)
-            WritingListElement -> writer.bigInt().writeBigInt(value)
-            WritingMapKey -> writer.key().bigInt().writeBigInt(value)
-            WritingMapValue -> writer.value().bigInt().writeBigInt(value)
+            TopLevel -> {
+                debug { "W.writeBigInt($value)" }
+                writer.writeBigInt(value)
+            }
+            WritingStructField -> {
+                debug { "W.bigInt($fieldToWrite).writeBigInt($value)" }
+                writer.bigInt(fieldToWrite).writeBigInt(value)
+            }
+            WritingListElement -> {
+                debug { "W.bigInt().writeBigInt($value)" }
+                writer.bigInt().writeBigInt(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().bigInt().writeBigInt($value)" }
+                writer.key().bigInt().writeBigInt(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().bigInt().writeBigInt($value)" }
+                writer.value().bigInt().writeBigInt(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeFloat(value: Float) {
+        debug { "encodeFloat($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeFloat4(value)
-            WritingStructField -> writer.float4(fieldToWrite).writeFloat4(value)
-            WritingListElement -> writer.float4().writeFloat4(value)
-            WritingMapKey -> writer.key().float4().writeFloat4(value)
-            WritingMapValue -> writer.value().float4().writeFloat4(value)
+            TopLevel -> {
+                debug { "W.writeFloat4($value)" }
+                writer.writeFloat4(value)
+            }
+            WritingStructField -> {
+                debug { "W.float4($fieldToWrite).writeFloat4($value)" }
+                writer.float4(fieldToWrite).writeFloat4(value)
+            }
+            WritingListElement -> {
+                debug { "W.float4().writeFloat4($value)" }
+                writer.float4().writeFloat4(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().float4().writeFloat4($value)" }
+                writer.key().float4().writeFloat4(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().float4().writeFloat4($value)" }
+                writer.value().float4().writeFloat4(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeDouble(value: Double) {
+        debug { "encodeDouble($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeFloat8(value)
-            WritingStructField -> writer.float8(fieldToWrite).writeFloat8(value)
-            WritingListElement -> writer.float8().writeFloat8(value)
-            WritingMapKey -> writer.key().float8().writeFloat8(value)
-            WritingMapValue -> writer.value().float8().writeFloat8(value)
+            TopLevel -> {
+                debug { "W.writeFloat8($value)" }
+                writer.writeFloat8(value)
+            }
+            WritingStructField -> {
+                debug { "W.float8($fieldToWrite).writeFloat8($value)" }
+                writer.float8(fieldToWrite).writeFloat8(value)
+            }
+            WritingListElement -> {
+                debug { "W.float8().writeFloat8($value)" }
+                writer.float8().writeFloat8(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().float8().writeFloat8($value)" }
+                writer.key().float8().writeFloat8(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().float8().writeFloat8($value)" }
+                writer.value().float8().writeFloat8(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeString(value: String) {
+        debug { "encodeString($value) - state: $state" }
         when (state) {
-            TopLevel -> writer.writeVarChar(value)
-            WritingStructField -> writer.varChar(fieldToWrite).writeVarChar(value)
-            WritingListElement -> writer.varChar().writeVarChar(value)
-            WritingMapKey -> writer.key().varChar().writeVarChar(value)
-            WritingMapValue -> writer.value().varChar().writeVarChar(value)
+            TopLevel -> {
+                debug { "W.writeVarChar($value)" }
+                writer.writeVarChar(value)
+            }
+            WritingStructField -> {
+                debug { "W.varChar($fieldToWrite).writeVarChar($value)" }
+                writer.varChar(fieldToWrite).writeVarChar(value)
+            }
+            WritingListElement -> {
+                debug { "W.varChar().writeVarChar($value)" }
+                writer.varChar().writeVarChar(value)
+            }
+            WritingMapKey -> {
+                debug { "W.key().varChar().writeVarChar($value)" }
+                writer.key().varChar().writeVarChar(value)
+            }
+            WritingMapValue -> {
+                debug { "W.value().varChar().writeVarChar($value)" }
+                writer.value().varChar().writeVarChar(value)
+            }
             else -> throw IllegalStateException("Encoder action not permitted in state $state")
         }
         endField()
     }
 
     override fun encodeEnum(enumDescriptor: SerialDescriptor, index: Int) {
+        debug { "encodeEnum(${enumDescriptor.getElementName(index)}) - state: $state" }
         encodeString(enumDescriptor.getElementName(index))
     }
 
     override fun encodeInline(descriptor: SerialDescriptor): Encoder {
+        debug { "encodeInline(${descriptor.serialName}) - state: $state" }
         return this
     }
 
     override fun beginStructure(descriptor: SerialDescriptor): CompositeEncoder {
+        debug { "beginStructure() - state: $state" }
         val structureKind = descriptor.kind as StructureKind
-        val innerEncoderState: State
-        val innerWriter: FieldWriter
+        save()
         when (structureKind) {
             StructureKind.CLASS -> {
-                innerEncoderState = WritingStruct
-                innerWriter = when (state) {
-                    TopLevel -> writer
-                    WritingStructField -> writer.struct(fieldToWrite)
-                    WritingListElement -> writer.struct()
-                    WritingMapKey -> writer.key().struct()
-                    WritingMapValue -> writer.value().struct()
+                writer = when (state) {
+                    TopLevel -> {
+                        debug { "W := W (no-op)" }
+                        writer
+                    }
+                    WritingStructField -> {
+                        debug { "W := W.struct($fieldToWrite)" }
+                        writer.struct(fieldToWrite)
+                    }
+                    WritingListElement -> {
+                        debug { "W := W.struct()" }
+                        writer.struct()
+                    }
+                    WritingMapKey -> {
+                        debug { "W := W.key().struct()" }
+                        writer.key().struct()
+                    }
+                    WritingMapValue -> {
+                        debug { "W := W.value().struct()" }
+                        writer.value().struct()
+                    }
                     else -> throw IllegalStateException("Encoder action not permitted in state $state")
                 } as FieldWriter
+                debug { "W.start()" }
+                writer.start()
+                state = WritingStruct
             }
             StructureKind.LIST -> {
-                innerEncoderState = WritingList
-                innerWriter = when (state) {
-                    TopLevel -> writer
-                    WritingStructField -> writer.list(fieldToWrite)
-                    WritingListElement -> writer.list()
-                    WritingMapKey -> writer.key().list()
-                    WritingMapValue -> writer.value().list()
+                writer = when (state) {
+                    TopLevel -> {
+                        debug { "W := W (no-op)" }
+                        writer
+                    }
+                    WritingStructField -> {
+                        debug { "W := W.list($fieldToWrite)" }
+                        writer.list(fieldToWrite)
+                    }
+                    WritingListElement -> {
+                        debug { "W := W.list()" }
+                        writer.list()
+                    }
+                    WritingMapKey -> {
+                        debug { "W := W.key().list()" }
+                        writer.key().list()
+                    }
+                    WritingMapValue -> {
+                        debug { "W := W.value().list()" }
+                        writer.value().list()
+                    }
                     else -> throw IllegalStateException("Encoder action not permitted in state $state")
                 } as FieldWriter
-                innerWriter.startList()
+                debug { "W.startList()" }
+                writer.startList()
+                state = WritingList
             }
             StructureKind.MAP -> {
-                innerEncoderState = WritingMap
-                innerWriter = when (state) {
-                    TopLevel -> writer
-                    WritingStructField -> writer.map(fieldToWrite)
-                    WritingListElement -> writer.map()
-                    WritingMapKey -> writer.key().map()
-                    WritingMapValue -> writer.value().map()
+                writer = when (state) {
+                    TopLevel -> {
+                        debug { "W := W (no-op)" }
+                        writer
+                    }
+                    WritingStructField -> {
+                        debug { "W := W.map($fieldToWrite)" }
+                        writer.map(fieldToWrite)
+                    }
+                    WritingListElement -> {
+                        debug { "W := W.map()" }
+                        writer.map()
+                    }
+                    WritingMapKey -> {
+                        debug { "W := W.key().map()" }
+                        writer.key().map()
+                    }
+                    WritingMapValue -> {
+                        debug { "W := W.value().map()" }
+                        writer.value().map()
+                    }
                     else -> throw IllegalStateException("Encoder action not permitted in state $state")
                 } as FieldWriter
-                innerWriter.startMap()
+                debug { "W.startMap()" }
+                writer.startMap()
+                state = WritingMap
             }
             StructureKind.OBJECT -> throw AssertionError("Impossible code path")
         }
-        state = when (state) {
-            TopLevel -> TopLevel
-            WritingListElement -> WritingList
-            WritingStructField -> WritingStruct
-            WritingMapKey, WritingMapValue -> WritingMap
-            else -> throw IllegalStateException("Encoder action not permitted in state $state")
-        }
-        // TODO: Should we re-use this object, with some way to restore back to current state once the Composite is done?
-        // Would that be more efficient, avoiding the creation of this temporary encoder?
-        // If not, could we hang on to this encoder somehow to re-use it?
-        return ArrowEncoder(innerWriter, serializersModule, innerEncoderState)
+        // ASSUMPTION: The CompositeEncoder must be used immediately to encode the entire composite value before
+        //   "this" encoder can be used to encode any other part of the parent structure.
+        //   With this assumption, it's safe to re-use this encoder instance, with the state to restore to saved in a stack.
+        return this
     }
 
     override fun endStructure(descriptor: SerialDescriptor) {
+        debug { "endStructure() - state: $state" }
         when (descriptor.kind as StructureKind) {
-            StructureKind.CLASS -> { /* Nothing to do for CLASS */ }
-            StructureKind.LIST -> writer.endList()
-            StructureKind.MAP -> writer.endMap()
-            StructureKind.OBJECT -> throw AssertionError("Impossible code path")
+            StructureKind.CLASS -> {
+                debug { "W.end()" }
+                writer.end()
+            }
+            StructureKind.LIST -> {
+                debug { "W.endList()" }
+                writer.endList()
+            }
+            StructureKind.MAP -> {
+                debug { "W.endMap()" }
+                writer.endMap()
+            }
+            StructureKind.OBJECT -> {
+                throw AssertionError("Impossible code path")
+            }
         }
-        state = Done
+        restore()
+        endField()
     }
 
     // Universal helper for CompositeEncoder so we can re-use Encoder logic
@@ -245,6 +475,7 @@ class ArrowEncoder private constructor(
             }
             WritingList -> WritingListElement
             WritingMap -> if (index % 2 == 0) {
+                debug { "W.startEntry()" }
                 writer.startEntry()
                 WritingMapKey
             } else {
@@ -264,6 +495,7 @@ class ArrowEncoder private constructor(
             WritingListElement -> WritingList
             WritingMapKey -> WritingMap
             WritingMapValue -> {
+                debug { "W.endEntry()" }
                 writer.endEntry()
                 WritingMap
             }
@@ -276,6 +508,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Boolean
     ) {
+        debug { "encodeBooleanElement($value) - state: $state" }
         startField(descriptor, index)
         encodeBoolean(value)
     }
@@ -285,6 +518,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Byte
     ) {
+        debug { "encodeByteElement($value) - state: $state" }
         startField(descriptor, index)
         encodeByte(value)
     }
@@ -294,6 +528,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Short
     ) {
+        debug { "encodeShortElement($value) - state: $state" }
         startField(descriptor, index)
         encodeShort(value)
     }
@@ -303,6 +538,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Char
     ) {
+        debug { "encodeCharElement($value) - state: $state" }
         startField(descriptor, index)
         encodeChar(value)
     }
@@ -312,6 +548,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Int
     ) {
+        debug { "encodeIntElement($value) - state: $state" }
         startField(descriptor, index)
         encodeInt(value)
     }
@@ -321,6 +558,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Long
     ) {
+        debug { "encodeLongElement($value) - state: $state" }
         startField(descriptor, index)
         encodeLong(value)
     }
@@ -330,6 +568,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Float
     ) {
+        debug { "encodeFloatElement($value) - state: $state" }
         startField(descriptor, index)
         encodeFloat(value)
     }
@@ -339,6 +578,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: Double
     ) {
+        debug { "encodeDoubleElement($value) - state: $state" }
         startField(descriptor, index)
         encodeDouble(value)
     }
@@ -348,6 +588,7 @@ class ArrowEncoder private constructor(
         index: Int,
         value: String
     ) {
+        debug { "encodeStringElement($value) - state: $state" }
         startField(descriptor, index)
         encodeString(value)
     }
@@ -356,6 +597,7 @@ class ArrowEncoder private constructor(
         descriptor: SerialDescriptor,
         index: Int
     ): Encoder {
+        debug { "encodeInlineElement() - state: $state" }
         startField(descriptor, index)
         return this
     }
@@ -366,41 +608,9 @@ class ArrowEncoder private constructor(
         serializer: SerializationStrategy<T>,
         value: T
     ) {
+        debug { "encodeSerializableElement($value) - state: $state" }
         startField(descriptor, index)
-        // Preserve the current writer so we can restore it after writing this element
-        val startingWriter = writer
-        val elementDescriptor = descriptor.getElementDescriptor(index)
-        // Configure this object to write the inner element
-        writer = when (elementDescriptor.kind) {
-            // When the inner element is a primitive, it's like an inline call. No additional configuration needed.
-            is PrimitiveKind, SerialKind.ENUM -> writer
-            is StructureKind.CLASS -> when (state) {
-                WritingListElement -> writer.struct()
-                WritingStructField -> writer.struct(fieldToWrite)
-                WritingMapKey -> writer.key().struct()
-                WritingMapValue -> writer.value().struct()
-                else -> throw IllegalStateException("Encoder action not permitted in state $state")
-            }
-            is StructureKind.LIST -> when (state) {
-                WritingListElement -> writer.list()
-                WritingStructField -> writer.list(fieldToWrite)
-                WritingMapKey -> writer.key().list()
-                WritingMapValue -> writer.value().list()
-                else -> throw IllegalStateException("Encoder action not permitted in state $state")
-            }
-            is StructureKind.MAP -> when (state) {
-                WritingListElement -> writer.map()
-                WritingStructField -> writer.map(fieldToWrite)
-                WritingMapKey -> writer.key().map()
-                WritingMapValue -> writer.value().map()
-                else -> throw IllegalStateException("Encoder action not permitted in state $state")
-            }
-            else -> throw AssertionError("Impossible code path")
-        } as FieldWriter
-        // Write the indicated serializable element
         serializer.serialize(this, value)
-        // And finally restore this object to continue writing the outer composite
-        writer = startingWriter
     }
 
     @ExperimentalSerializationApi
@@ -410,6 +620,7 @@ class ArrowEncoder private constructor(
         serializer: SerializationStrategy<T>,
         value: T?
     ) {
+        debug { "encodeNullableSerializableElement($value) - state: $state" }
         if (value == null) {
             startField(descriptor, index)
             encodeNull()

@@ -711,6 +711,175 @@ object ParquetReportHandlerTest {
             }
         }
 
+        @Serializable
+        data class SimpleRecord(
+            val a: String,
+            val b: Int,
+        )
+
+        @Serializable
+        data class NestedRecord(
+            val innerRecord: SimpleRecord,
+            val listOfRecords: List<SimpleRecord>,
+            val mapOfRecords: Map<String, SimpleRecord>,
+            val multimap: Map<String, List<SimpleRecord>>,
+            val listOfMaps: List<Map<String, SimpleRecord>>,
+        )
+
+        @Test
+        fun `arrow report handler supports nested complex types`() {
+            val directory = createTempDirectory("ParquetReportHandlerTest_")
+            val path = directory / "test.parquet"
+            assert(!path.exists())
+
+            val t1 = Instant.parse("2000-01-01T00:00:00Z")
+            ParquetReportHandler(path).use { parquetReportHandler ->
+                val recordChannel = parquetReportHandler.initChannel<NestedRecord>("record_channel")
+                recordChannel.report(t1, NestedRecord(
+                    SimpleRecord("a1", 1),
+                    listOf(
+                        SimpleRecord("a2", 2),
+                        SimpleRecord("a3", 3),
+                    ),
+                    mapOf(
+                        "k1" to SimpleRecord("a4", 4),
+                        "k2" to SimpleRecord("a5", 5),
+                    ),
+                    mapOf(
+                        "k3" to listOf(
+                            SimpleRecord("a6", 6),
+                            SimpleRecord("a7", 7),
+                        ),
+                        "k4" to listOf(
+                            SimpleRecord("a8", 8),
+                            SimpleRecord("a9", 9),
+                        ),
+                    ),
+                    listOf(
+                        mapOf(
+                            "k5" to SimpleRecord("a10", 10),
+                            "k6" to SimpleRecord("a11", 11),
+                        ),
+                        mapOf(
+                            "k7" to SimpleRecord("a12", 12),
+                            "k8" to SimpleRecord("a13", 13),
+                        ),
+                    ),
+                ))
+            }
+
+            val df = DataFrame.readParquet(path)
+            checkDataFrame(df, "timestamp", "record_channel") {
+                row {
+                    assertEquals(t1.toLocalDateTime(TimeZone.UTC))
+                    check {
+                        assertIs<DataRow<*>>(it)
+
+                        val innerRecord = it["innerRecord"]
+                        assertIs<DataRow<*>>(innerRecord)
+                        assertEquals("a1", innerRecord["a"])
+                        assertEquals(1, innerRecord["b"])
+
+                        val listOfRecords = it["listOfRecords"]
+                        assertIs<DataFrame<*>>(listOfRecords)
+                        checkDataFrame(listOfRecords, "a", "b") {
+                            rowEquals("a2", 2)
+                            rowEquals("a3", 3)
+                        }
+
+                        val mapOfRecords = it["mapOfRecords"]
+                        assertIs<DataFrame<*>>(mapOfRecords)
+                        checkDataFrame(mapOfRecords, "key", "value") {
+                            row {
+                                assertEquals("k1")
+                                check { v1 ->
+                                    assertIs<DataRow<*>>(v1)
+                                    assertEquals("a4", v1["a"])
+                                    assertEquals(4, v1["b"])
+                                }
+                            }
+                            row {
+                                assertEquals("k2")
+                                check { v2 ->
+                                    assertIs<DataRow<*>>(v2)
+                                    assertEquals("a5", v2["a"])
+                                    assertEquals(5, v2["b"])
+                                }
+                            }
+                        }
+
+                        val multimap = it["multimap"]
+                        assertIs<DataFrame<*>>(multimap)
+                        checkDataFrame(multimap, "key", "value") {
+                            row {
+                                assertEquals("k3")
+                                check { v3 ->
+                                    assertIs<DataFrame<*>>(v3)
+                                    checkDataFrame(v3, "a", "b") {
+                                        rowEquals("a6", 6)
+                                        rowEquals("a7", 7)
+                                    }
+                                }
+                            }
+                            row {
+                                assertEquals("k4")
+                                check { v4 ->
+                                    assertIs<DataFrame<*>>(v4)
+                                    checkDataFrame(v4, "a", "b") {
+                                        rowEquals("a8", 8)
+                                        rowEquals("a9", 9)
+                                    }
+                                }
+                            }
+                        }
+
+                        val listOfMaps = it["listOfMaps"]
+                        assertIs<List<*>>(listOfMaps)
+                        assertEquals(2, listOfMaps.size)
+                        val (m1, m2) = listOfMaps
+                        assertIs<DataFrame<*>>(m1)
+                        checkDataFrame(m1, "key", "value") {
+                            row {
+                                assertEquals("k5")
+                                check { v5 ->
+                                    assertIs<DataRow<*>>(v5)
+                                    assertEquals("a10", v5["a"])
+                                    assertEquals(10, v5["b"])
+                                }
+                            }
+                            row {
+                                assertEquals("k6")
+                                check { v6 ->
+                                    assertIs<DataRow<*>>(v6)
+                                    assertEquals("a11", v6["a"])
+                                    assertEquals(11, v6["b"])
+                                }
+                            }
+                        }
+                        assertIs<DataFrame<*>>(m2)
+                        checkDataFrame(m2, "key", "value") {
+                            row {
+                                assertEquals("k7")
+                                check { v7 ->
+                                    assertIs<DataRow<*>>(v7)
+                                    assertEquals("a12", v7["a"])
+                                    assertEquals(12, v7["b"])
+                                }
+                            }
+                            row {
+                                assertEquals("k8")
+                                check { v8 ->
+                                    assertIs<DataRow<*>>(v8)
+                                    assertEquals("a13", v8["a"])
+                                    assertEquals(13, v8["b"])
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         private inline fun <reified T> ChannelizedReportHandler.initChannel(
             name: String,
             metadata: Map<String, Metadatum> = mapOf()
