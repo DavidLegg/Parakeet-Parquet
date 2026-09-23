@@ -24,12 +24,16 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
+    // Provides the memory allocator for Apache Arrow
+    runtimeOnly("org.apache.arrow:arrow-memory-netty:19.0.0")
+
     // Provides an SLF4J binding to suppress "No SLF4J providers were found" warnings.
     implementation("org.slf4j:slf4j-nop:2.0.16")
 }
 
 application {
-    mainClass.set("examples.orbit.MainKt")
+    mainClass = "examples.orbit.MainKt"
+    applicationDefaultJvmArgs = listOf("--add-opens=java.base/java.nio=ALL-UNNAMED")
 }
 
 kotlin {

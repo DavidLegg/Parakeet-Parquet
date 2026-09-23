@@ -4,9 +4,9 @@ import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelReport.ChannelData
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
 import gov.nasa.jpl.parakeet.kernel.Name
+import gov.nasa.jpl.parakeet.parquet.CombineReportsRule
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.descriptors.PolymorphicKind
 import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -14,38 +14,14 @@ import kotlinx.serialization.descriptors.SerialKind
 import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.descriptors.elementDescriptors
 import kotlinx.serialization.descriptors.elementNames
-import kotlinx.serialization.encoding.CompositeEncoder
-import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.serializer
 import org.apache.arrow.memory.BufferAllocator
 import org.apache.arrow.memory.RootAllocator
-import org.apache.arrow.vector.BigIntVector
-import org.apache.arrow.vector.BitVector
 import org.apache.arrow.vector.FieldVector
-import org.apache.arrow.vector.Float4Vector
-import org.apache.arrow.vector.Float8Vector
-import org.apache.arrow.vector.IntVector
-import org.apache.arrow.vector.SmallIntVector
 import org.apache.arrow.vector.TimeStampNanoVector
-import org.apache.arrow.vector.TinyIntVector
-import org.apache.arrow.vector.UInt2Vector
-import org.apache.arrow.vector.VarCharVector
 import org.apache.arrow.vector.VectorSchemaRoot
-import org.apache.arrow.vector.complex.ListVector
-import org.apache.arrow.vector.complex.StructVector
-import org.apache.arrow.vector.complex.writer.BaseWriter
-import org.apache.arrow.vector.complex.writer.BigIntWriter
-import org.apache.arrow.vector.complex.writer.BitWriter
-import org.apache.arrow.vector.complex.writer.FieldWriter
-import org.apache.arrow.vector.complex.writer.Float4Writer
-import org.apache.arrow.vector.complex.writer.Float8Writer
-import org.apache.arrow.vector.complex.writer.IntWriter
-import org.apache.arrow.vector.complex.writer.SmallIntWriter
-import org.apache.arrow.vector.complex.writer.TinyIntWriter
-import org.apache.arrow.vector.complex.writer.UInt2Writer
-import org.apache.arrow.vector.complex.writer.VarCharWriter
 import org.apache.arrow.vector.ipc.ArrowStreamWriter
 import org.apache.arrow.vector.types.FloatingPointPrecision
 import org.apache.arrow.vector.types.TimeUnit
@@ -53,12 +29,14 @@ import org.apache.arrow.vector.types.pojo.ArrowType
 import org.apache.arrow.vector.types.pojo.Field
 import org.apache.arrow.vector.types.pojo.FieldType
 import java.io.OutputStream
+import kotlin.time.Instant
 
 fun <R> OutputStream.usingArrowStreamReportHandler(
     serializersModule: SerializersModule = Json.serializersModule,
+    combineReportsRule: CombineReportsRule = CombineReportsRule.DONT_COMBINE,
     allocator: BufferAllocator = RootAllocator(),
     block: (ArrowStreamReportHandler) -> R,
-) = ArrowStreamReportHandler(this, serializersModule, allocator).use(block)
+) = ArrowStreamReportHandler(this, serializersModule, combineReportsRule, allocator).use(block)
 
 /**
  * Writes channelized reports from a simulator directly to an Apache Arrow IPC stream.
@@ -66,9 +44,10 @@ fun <R> OutputStream.usingArrowStreamReportHandler(
 class ArrowStreamReportHandler(
     private val outputStream: OutputStream,
     private val serializersModule: SerializersModule = SerializersModule {},
+    private val combineReportsRule: CombineReportsRule = CombineReportsRule.DONT_COMBINE,
     private val allocator: BufferAllocator = RootAllocator(),
     // TODO: Find a smarter way to decide on batch size, e.g. a fixed amount of memory
-    private val maxRowsPerBatch: Int = 1024,
+    private val maxRowsPerBatch: Int = 100_000,
 ) : ChannelizedReportHandler, AutoCloseable {
     private data class ChannelInfo(
         val serializer: KSerializer<*>,
@@ -77,21 +56,23 @@ class ArrowStreamReportHandler(
         val encoder: ArrowEncoder
     )
     private val timestampField = Field("timestamp", FieldType(false, ArrowType.Timestamp(TimeUnit.NANOSECOND, null), null, null), null)
-    private val timestampVector = (timestampField.createVector(allocator) as TimeStampNanoVector).apply {
-        setInitialCapacity(maxRowsPerBatch)
-        allocateNew()
-    }
+    private val timestampVector = timestampField.createVector(allocator) as TimeStampNanoVector
     private val channelInfo: MutableMap<Name, ChannelInfo> = mutableMapOf()
 
     private var vectorSchemaRoot: VectorSchemaRoot? = null
     private var writer: ArrowStreamWriter? = null
 
     private val initialReports: MutableList<ChannelData<*>> = mutableListOf()
-    private var rowIndex = 0
+    private var lastWrittenTime: Instant = Instant.DISTANT_PAST
+    private var lastWrittenRowIndex = -1
 
     private val initialized get() = writer != null
     private fun initialize() {
-        vectorSchemaRoot = VectorSchemaRoot(listOf(timestampVector) + channelInfo.values.map { it.vector })
+        val allVectors = listOf(timestampVector) + channelInfo.values.map { it.vector }
+        // TODO: If we switch to memory-based sizing, we can calculate the number of rows here
+        allVectors.forEach { it.setInitialCapacity(maxRowsPerBatch) }
+        vectorSchemaRoot = VectorSchemaRoot(allVectors)
+        vectorSchemaRoot!!.allocateNew()
         writer = ArrowStreamWriter(vectorSchemaRoot, null, outputStream)
         writer!!.start()
         // Now that we have a writer, re-report all the initial reports to apply the combination policy to them.
@@ -100,20 +81,22 @@ class ArrowStreamReportHandler(
     }
 
     private fun flushBatch() {
+        // Rows are indexed 0-based, so the number of completed rows is the last completed row index + 1
+        val completedRows = lastWrittenRowIndex + 1
         // Mark all vectors as complete by setting valueCount on them
-        channelInfo.values.forEach { it.vector.valueCount = rowIndex }
-        vectorSchemaRoot!!.setRowCount(rowIndex)
+        channelInfo.values.forEach { it.vector.valueCount = completedRows }
+        vectorSchemaRoot!!.setRowCount(completedRows)
         // Ask the writer to write all vectors to the output stream
         writer!!.writeBatch()
         // Finally, reset all vectors for the next batch
         channelInfo.values.forEach { it.vector.reset() }
-        rowIndex = 0
+        lastWrittenRowIndex = -1
     }
 
     private var closed = false
     override fun close() {
         if (!initialized) initialize()
-        if (rowIndex > 0) flushBatch()
+        if (lastWrittenRowIndex >= 0) flushBatch()
 
         // Close things in the opposite order of how we opened them
         // TODO: Should we wrap any of this in try/catch/finally?
@@ -228,13 +211,41 @@ class ArrowStreamReportHandler(
             }
         }
 
-        // TODO: Support combining rows
         val channelInfo = channelInfo.getValue(data.channel)
-        timestampVector.setSafe(rowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
-        channelInfo.encoder.position = rowIndex
+
+        // Decide whether to advance to the next row based on our report-combining rule.
+        val shouldAdvanceRow = when (combineReportsRule) {
+            CombineReportsRule.DONT_COMBINE -> {
+                // Advance to the next row unconditionally
+                true
+            }
+            CombineReportsRule.COMBINE_AND_KEEP_ALL -> {
+                // Advance to the next row when time changes or the slot we would write to is already full
+                data.time != lastWrittenTime || !channelInfo.vector.isNull(lastWrittenRowIndex)
+            }
+            CombineReportsRule.COMBINE_AND_KEEP_LAST -> {
+                // Only advance to the next row when time changes (permits overwriting a filled slot)
+                data.time != lastWrittenTime
+            }
+        }
+        // Act on that decision
+        if (shouldAdvanceRow) {
+            // Start by advancing the row counter
+            lastWrittenRowIndex++
+            // If that filled the batch, flush it. This would reset the row index to -1, so increment it again after.
+            if (lastWrittenRowIndex >= maxRowsPerBatch) {
+                flushBatch()
+                lastWrittenRowIndex++
+            }
+            // At this point, the row index points to an empty row. Record that time.
+            timestampVector.setSafe(lastWrittenRowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
+            lastWrittenTime = data.time
+        }
+
+        // At this point, lastWrittenRowIndex points to the row we should write to,
+        // regardless of whether that's writing to an empty slot or overwriting old data.
+        channelInfo.encoder.position = lastWrittenRowIndex
         @Suppress("UNCHECKED_CAST")
         (channelInfo.serializer as KSerializer<Any?>).serialize(channelInfo.encoder, data.data)
-        rowIndex++
-        if (rowIndex >= maxRowsPerBatch) flushBatch()
     }
 }
