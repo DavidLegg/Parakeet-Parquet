@@ -91,10 +91,8 @@ class ArrowStreamReportHandler(
 
     private val initialized get() = writer != null
     private fun initialize() {
-        println("DEBUG: Initializing")
         vectorSchemaRoot = VectorSchemaRoot(listOf(timestampVector) + channelInfo.values.map { it.vector })
         writer = ArrowStreamWriter(vectorSchemaRoot, null, outputStream)
-        println("DEBUG: Starting writer")
         writer!!.start()
         // Now that we have a writer, re-report all the initial reports to apply the combination policy to them.
         initialReports.forEach { report(it) }
@@ -102,37 +100,26 @@ class ArrowStreamReportHandler(
     }
 
     private fun flushBatch() {
-        println("DEBUG: Flushing batch")
         // Mark all vectors as complete by setting valueCount on them
-        println("DEBUG: Finalizing vectors")
         channelInfo.values.forEach { it.vector.valueCount = rowIndex }
-        println("DEBUG: Finalizing VSR")
         vectorSchemaRoot!!.setRowCount(rowIndex)
         // Ask the writer to write all vectors to the output stream
-        println("DEBUG: Writing batch")
         writer!!.writeBatch()
         // Finally, reset all vectors for the next batch
-        println("DEBUG: Resetting vectors")
         channelInfo.values.forEach { it.vector.reset() }
         rowIndex = 0
     }
 
     private var closed = false
     override fun close() {
-        println("DEBUG: Closing")
         if (!initialized) initialize()
-        println("DEBUG: Close: rowIndex = $rowIndex")
         if (rowIndex > 0) flushBatch()
 
         // Close things in the opposite order of how we opened them
         // TODO: Should we wrap any of this in try/catch/finally?
-        println("DEBUG: Closing writer")
         writer!!.close()
-        println("DEBUG: Closing VSR")
         vectorSchemaRoot!!.close()
-        println("DEBUG: Closing vectors")
         channelInfo.values.forEach { it.vector.close() }
-        println("DEBUG: Closed")
         closed = true
     }
 
@@ -154,11 +141,8 @@ class ArrowStreamReportHandler(
 
         val nameString = name.toString()
         val field = serializer.descriptor.toArrowField(nameString, topLevel = true)
-        println("DEBUG: Creating vector for $nameString")
         val vector = field.createVector(allocator)
-        println("DEBUG: Setting capacity for $nameString vector to $maxRowsPerBatch")
         vector.setInitialCapacity(maxRowsPerBatch)
-        println("DEBUG: Allocating vector for $nameString")
         vector.allocateNew()
         channelInfo[name] = ChannelInfo(
             serializer,
@@ -246,9 +230,7 @@ class ArrowStreamReportHandler(
 
         // TODO: Support combining rows
         val channelInfo = channelInfo.getValue(data.channel)
-        println("DEBUG: Writing row $rowIndex timestamp ${data.time}")
         timestampVector.setSafe(rowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
-        println("DEBUG: Writing row $rowIndex channel ${data.channel} value ${data.data}")
         channelInfo.encoder.position = rowIndex
         @Suppress("UNCHECKED_CAST")
         (channelInfo.serializer as KSerializer<Any?>).serialize(channelInfo.encoder, data.data)

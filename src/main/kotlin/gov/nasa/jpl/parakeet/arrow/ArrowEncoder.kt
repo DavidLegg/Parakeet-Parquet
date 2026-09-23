@@ -3,14 +3,35 @@ package gov.nasa.jpl.parakeet.arrow
 import gov.nasa.jpl.parakeet.arrow.ArrowEncoder.State.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerializationStrategy
-import kotlinx.serialization.descriptors.PrimitiveKind
 import kotlinx.serialization.descriptors.SerialDescriptor
-import kotlinx.serialization.descriptors.SerialKind
 import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.encoding.CompositeEncoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.modules.SerializersModule
 import org.apache.arrow.vector.complex.writer.FieldWriter
+
+/*
+ * The ArrowEncoder adapts between the Kotlin serialization encoder interface and the Apache Arrow vector writer interface.
+ *
+ * Functionally, it's a state machine that can be either:
+ * - TopLevel: We are writing a bare value, not part of a composite
+ * - Writing<composite>: We are writing a composite value (struct, list, or map), but are not inside a field/element of that composite
+ * - Writing<composite>Field/Element: We are writing the value of a member of that composite
+ *
+ * The ugliness comes from a mismatch in interfaces.
+ * The Encoder interface expects us to access a field, then later determine what type to write to that field.
+ * The FieldWriter interface expects us to know the type of the field up front.
+ * To bridge this gap, we defer accessing the field until we are ready to write the value.
+ * This leads to the lots of repeated code, but at least it's all fairly simple code.
+ *
+ * The main complication to the basic state machine is how we deal with nested complex types.
+ * When we enter a nested complex type using beginStructure, we save the current state to a stack.
+ * When we exit using endStructure, we restore the state from the stack.
+ * Thus, the ArrowEncoder overall is a deterministic push-down automaton.
+ *
+ * Writing the encoder as a PDA means we keep allocation to a minimum,
+ * rather than building a new encoder for each nested structure or needing to somehow cache sub-encoders.
+ */
 
 /**
  * An [Encoder] which connects to an Arrow vector writer.
@@ -24,22 +45,25 @@ class ArrowEncoder private constructor(
 
     var position by writer::position
 
+    // TODO: Once we're confident this class is working well, remove the debug call and fold this into the constructor
     private var state = state
         set(value) {
             debug { "S := $value (was $state)" }
             field = value
         }
 
-    private val stack = ArrayDeque<Pair<FieldWriter, State>>(4)
+    // Guesstimate 4 levels of nesting is enough for most use cases
+    private val writerStack = ArrayDeque<FieldWriter>(4)
+    private val stateStack = ArrayDeque<State>(4)
     private fun save() {
         debug { "Save (W, $state)" }
-        stack.addLast(writer to state)
+        writerStack.addLast(writer)
+        stateStack.addLast(state)
     }
     private fun restore() {
-        val (w, s) = stack.removeLast()
-        debug { "Restore (W, $s)" }
-        writer = w
-        state = s
+        writer = writerStack.removeLast()
+        state = stateStack.removeLast()
+        debug { "Restore (W, $state)" }
     }
 
     private enum class State {
@@ -51,14 +75,17 @@ class ArrowEncoder private constructor(
         WritingMap,
         WritingMapKey,
         WritingMapValue,
-        Done
     }
 
     private var fieldToWrite: String? = null
 
-    private val debug = true
+    // TODO: While this way of setting up the DEBUG flag should allow the compiler to strip out all the debug code,
+    //   once we're confident that this class is working well, we should strip out all the debug calls to tidy up the source code.
+    companion object {
+        private const val DEBUG = false
+    }
     private fun debug(message: () -> String) {
-        if (debug) println("DEBUG: " + "".padStart(stack.size * 2) + message())
+        if (DEBUG) println("DEBUG: " + "".padStart(stateStack.size * 2) + message())
     }
 
     @ExperimentalSerializationApi
