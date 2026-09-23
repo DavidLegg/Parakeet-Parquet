@@ -1,5 +1,6 @@
 package examples.orbit
 
+import gov.nasa.jpl.parakeet.arrow.usingArrowStreamReportHandler
 import gov.nasa.jpl.parakeet.examples.orbit.EarthOrbit
 import gov.nasa.jpl.parakeet.foundation.Simulator
 import gov.nasa.jpl.parakeet.foundation.reporting.ChannelizedReportHandler
@@ -54,7 +55,7 @@ fun gridTest(outputDir: Path, reps: Int) {
     val yearLength = yearOptions.maxOf { it.toString().length }
     val parallelOptions = listOf(false, true)
     val threadingLength = maxOf("serial".length, "parallel".length)
-    val formatOptions = listOf(/*"jsonl", */"csv", "parquet", "condensed.parquet")
+    val formatOptions = listOf(/*"jsonl", "csv",*/ "parquet", "condensed.parquet", "arrow", "condensed.arrow")
     val formatLength = formatOptions.maxOf { it.length }
     val totalReps = yearOptions.size * reps * parallelOptions.size * formatOptions.size
     val repsLength = totalReps.toString().length
@@ -130,6 +131,23 @@ fun runSimulation(outputPath: Path, numYears: Int, parallel: Boolean) {
         ".jsonl" to {
             outputPath.outputStream().use {
                 runSimulation(jsonlReportHandler(it, EarthOrbit.JSON_FORMAT))
+            }
+        },
+        ".condensed.arrow" to {
+            outputPath.outputStream().use {
+                it.usingArrowStreamReportHandler(
+                    EarthOrbit.JSON_FORMAT.serializersModule,
+                    combineReportsRule = CombineReportsRule.COMBINE_AND_KEEP_LAST,
+                    block = ::runSimulation,
+                )
+            }
+        },
+        ".arrow" to {
+            outputPath.outputStream().use {
+                it.usingArrowStreamReportHandler(
+                    EarthOrbit.JSON_FORMAT.serializersModule,
+                    block = ::runSimulation,
+                )
             }
         },
     )

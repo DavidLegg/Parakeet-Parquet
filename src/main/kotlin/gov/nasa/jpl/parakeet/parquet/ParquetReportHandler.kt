@@ -27,14 +27,19 @@ import org.apache.parquet.schema.Types
 import java.nio.file.Path
 import kotlin.time.Instant
 
-fun Path.usingParquetReportHandler(
+fun <R> Path.usingParquetReportHandler(
     serializersModule: SerializersModule = Json.serializersModule,
     combineReportsRule: CombineReportsRule = DONT_COMBINE,
-    block: (ParquetReportHandler) -> Unit,
-) {
-    ParquetReportHandler(this, serializersModule, combineReportsRule).use(block)
-}
+    block: (ParquetReportHandler) -> R,
+) = ParquetReportHandler(this, serializersModule, combineReportsRule).use(block)
 
+/**
+ * Writes channelized reports from a simulator directly to a parquet file.
+ *
+ * @param path The path to the parquet file to write to.
+ * @param serializersModule The serializers module used to decompose objects into parquet-compatible structures and primitives.
+ * @param combineReportsRule Whether and how to combine multiple reports at the same time on the same channel.
+ */
 class ParquetReportHandler(
     private val path: Path,
     private val serializersModule: SerializersModule = Json.serializersModule,

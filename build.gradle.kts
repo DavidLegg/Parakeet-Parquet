@@ -22,6 +22,8 @@ dependencies {
     implementation("org.apache.parquet:parquet-hadoop:1.17.0")
     implementation("org.apache.hadoop:hadoop-client-api:3.4.0")
     implementation("org.apache.hadoop:hadoop-client-runtime:3.4.0")
+    implementation("org.apache.arrow:arrow-memory:19.0.0")
+    implementation("org.apache.arrow:arrow-vector:19.0.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
