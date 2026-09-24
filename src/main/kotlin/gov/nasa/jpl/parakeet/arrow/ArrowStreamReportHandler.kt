@@ -230,13 +230,12 @@ class ArrowStreamReportHandler(
         }
         // Act on that decision
         if (shouldAdvanceRow) {
-            // Start by advancing the row counter
-            lastWrittenRowIndex++
-            // If that filled the batch, flush it. This would reset the row index to -1, so increment it again after.
-            if (lastWrittenRowIndex >= maxRowsPerBatch) {
+            // If the batch is already full, flush it.
+            if (lastWrittenRowIndex >= maxRowsPerBatch - 1) {
                 flushBatch()
-                lastWrittenRowIndex++
             }
+            // At this point, the row index points to the last completed row (or -1 if we just flushed a batch).
+            lastWrittenRowIndex++
             // At this point, the row index points to an empty row. Record that time.
             timestampVector.setSafe(lastWrittenRowIndex, data.time.epochSeconds * 1_000_000_000L + data.time.nanosecondsOfSecond)
             lastWrittenTime = data.time
